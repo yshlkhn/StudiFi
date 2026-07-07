@@ -59,7 +59,7 @@ export default function Hero() {
                     animate="show"
                     className="inline-flex items-center gap-2 px-4 py-1.5 mb-8 rounded-full border backdrop-blur-2xl border-[rgba(194,60,58,0.25)] bg-[rgba(194,60,58,0.08)] text-brand-accent text-sm font-medium"
                 >
-                    <span className="w-1.5 h-1.5 rounded-full bg-brand-accent animate-pulse" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-brand-secondary animate-pulse" />
                     AI-Powered Learning for Every Student
                 </motion.div>
 
