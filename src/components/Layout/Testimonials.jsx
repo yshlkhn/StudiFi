@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { Star, Quote } from 'lucide-react'
+import { useState } from 'react'
 
 const testimonials = [
   {
@@ -59,35 +60,16 @@ const testimonials = [
 ]
 
 export default function Testimonials() {
+    const [activeCard, setActiveCard] = useState(null)
+
   return (
     <section id="testimonials" className="relative py-12 sm:py-14 md:py-16 px-6">
       {/* Background glow */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-175 h-75 bg-brand-accent rounded-full filter blur-[180px] opacity-5 pointer-events-none" />
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        {testimonials.map((t, i) => {
+          const isActive = activeCard === i
 
-      <div className="relative max-w-6xl mx-auto">
-        {/* Header */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.6 }}
-          className="text-center mb-16"
-        >
-          <span className="text-xs font-semibold uppercase tracking-widest text-brand-secondary mb-3 block">
-            Testimonials
-          </span>
-
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-balance mb-4">
-            Loved by <span className="text-brand-secondary">students worldwide</span>
-          </h2>
-          <p className="text-sm sm:text-base text-muted-foreground max-w-xl mx-auto leading-relaxed">
-            Discover how students are using StudiFi's AI-powered learning platform to master concepts faster, prepare for exams with confidence, and achieve better academic results.
-          </p>
-        </motion.div>
-
-        {/* Cards grid */}
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {testimonials.map((t, i) => (
+          return (
             <motion.div
               key={t.name}
               initial={{ opacity: 0, y: 30 }}
@@ -95,12 +77,19 @@ export default function Testimonials() {
               viewport={{ once: true }}
               transition={{ duration: 0.6, delay: i * 0.08 }}
               whileHover={{ rotate: 0.6, y: -4, scale: 1.02 }}
-              className="group relative p-6 rounded-2xl glass-card cursor-default overflow-hidden"
+              onClick={() => setActiveCard(i)}
+              className={`group relative p-6 rounded-2xl glass-card cursor-pointer overflow-hidden transition-all duration-300 ${
+                isActive
+                  ? 'border border-[rgba(239,169,67,0.30)] bg-[rgba(239,169,67,0.08)]'
+                  : ''
+              }`}
             >
               {/* Quote icon */}
               <Quote
                 className="absolute top-5 right-5 w-8 h-8 opacity-10 group-hover:opacity-20 transition-opacity"
-                style={{ color: t.color }}
+                style={{
+                  color: isActive ? '#efa943' : t.color,
+                }}
               />
 
               {/* Stars */}
@@ -108,7 +97,9 @@ export default function Testimonials() {
                 {Array.from({ length: t.rating }).map((_, j) => (
                   <Star
                     key={j}
-                    className="w-4 h-4 fill-brand-secondary text-brand-secondary"
+                    className={`w-4 h-4 fill-current ${
+                      isActive ? 'text-[#efa943]' : 'text-brand-secondary'
+                    }`}
                   />
                 ))}
               </div>
@@ -121,19 +112,31 @@ export default function Testimonials() {
               {/* Author */}
               <div className="flex items-center gap-3">
                 <div
-                  className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-[#080d14] shrink-0"
-                  style={{ background: t.color }}
+                  className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-[#080d14] shrink-0 transition-colors duration-300"
+                  style={{
+                    background: isActive ? '#efa943' : t.color,
+                  }}
                 >
                   {t.initials}
                 </div>
+
                 <div>
-                  <div className="text-sm font-semibold text-foreground">{t.name}</div>
-                  <div className="text-xs text-muted-foreground">{t.role}</div>
+                  <div
+                    className={`text-sm font-semibold transition-colors duration-300 ${
+                      isActive ? 'text-[#efa943]' : 'text-foreground'
+                    }`}
+                  >
+                    {t.name}
+                  </div>
+
+                  <div className="text-xs text-muted-foreground">
+                    {t.role}
+                  </div>
                 </div>
               </div>
             </motion.div>
-          ))}
-        </div>
+          )
+        })}
       </div>
     </section>
   )
