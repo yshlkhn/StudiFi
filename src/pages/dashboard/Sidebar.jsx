@@ -1,10 +1,10 @@
-import Logo from "@/assets/logo_header.svg";
+import Logo from "@/assets/logo_footer.svg";
 import { LayoutDashboard, FolderOpen, MessageSquare, Brain, BarChart3, Settings, LogOut, Menu, X } from "lucide-react";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabaseClient";
 import { toast } from "react-toastify";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate, NavLink } from "react-router-dom";
 
 export default function Sidebar() {
 
@@ -12,15 +12,14 @@ export default function Sidebar() {
     const [loadingUser, setLoadingUser] = useState(true);
     const [user, setUser] = useState(null);
     const navigate = useNavigate();
-    const location = useLocation();
 
     const NAV_ITEMS = [
         { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
         { id: "folders", label: "My Folders", icon: FolderOpen, href: "/myfolders" },
-        { id: "chat", label: "AI Chat", icon: MessageSquare },
-        { id: "quizzes", label: "Quizzes", icon: Brain },
-        { id: "analytics", label: "Analytics", icon: BarChart3 },
-        { id: "settings", label: "Settings", icon: Settings },
+        { id: "chat", label: "AI Chat", icon: MessageSquare, href: "/ai-chat" },
+        { id: "quizzes", label: "Quizzes", icon: Brain, href: "/quizes" },
+        { id: "analytics", label: "Analytics", icon: BarChart3, href: "/analytics" },
+        { id: "settings", label: "Settings", icon: Settings, href: "/settings" },
     ];
 
     useEffect(() => {
@@ -78,8 +77,8 @@ export default function Sidebar() {
                 transition-transform duration-300
                 ${navOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0`}
             >
-                <div className="flex items-center justify-between mb-10 px-1">
-                    <img src={Logo} alt="StudiFi" className="h-7 w-auto object-contain" />
+                <div className="flex items-center justify-between mb-5 px-1">
+                    <img src={Logo} alt="StudiFi" className="h-auto w-30 object-contain" />
                     <button onClick={() => setNavOpen(false)} className="lg:hidden text-muted-foreground">
                         <X className="w-5 h-5" />
                     </button>
@@ -88,27 +87,31 @@ export default function Sidebar() {
                 <nav className="flex-1 space-y-0.5">
                     {NAV_ITEMS.map((item) => {
                         const Icon = item.icon;
-                        const active = location.pathname === item.href;
+
                         return (
-                            <button
+                            <NavLink
                                 key={item.id}
-                                onClick={() => {
-                                    navigate(item.href);
-                                    setNavOpen(false);
-                                }}
-                                className={`relative cursor-pointer w-full flex items-center gap-3 pl-4 pr-3 py-2.5 rounded-lg text-[13.5px] font-medium
-                                    transition-colors duration-150
-                                    ${active ? "text-brand-secondary" : "text-white/50 hover:text-white/90"}`}
+                                to={item.href}
+                                end={item.href === "/dashboard"}
+                                onClick={() => setNavOpen(false)}
+                                className={({ isActive }) =>
+                                    `relative w-full flex items-center gap-3 pl-4 pr-3 py-2.5 rounded-lg text-[13.5px] font-medium transition-colors duration-150
+                                    ${isActive ? "text-brand-secondary" : "text-white/50 hover:text-white/90"}`
+                                }
                             >
-                                {active && (
-                                    <motion.span
-                                        layoutId="nav-active"
-                                        className="absolute inset-0 rounded-lg bg-brand-secondary/10 border border-brand-secondary/20"
-                                    />
+                                {({ isActive }) => (
+                                    <>
+                                        {isActive && (
+                                            <motion.span
+                                                layoutId="nav-active"
+                                                className="absolute inset-0 rounded-lg bg-brand-secondary/10 border border-brand-secondary/20"
+                                            />
+                                        )}
+                                        <Icon className="w-4 h-4 relative z-10" />
+                                        <span className="relative z-10">{item.label}</span>
+                                    </>
                                 )}
-                                <Icon className="w-4 h-4 relative z-10" />
-                                <span className="relative z-10">{item.label}</span>
-                            </button>
+                            </NavLink>
                         );
                     })}
                 </nav>

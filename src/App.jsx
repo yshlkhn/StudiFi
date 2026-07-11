@@ -19,6 +19,11 @@ import DashboardLayout from "./pages/DashboardLayout";
 import Dashboard from "./pages/dashboard/Dashboard";
 import MyFolders from "./pages/dashboard/MyFolders";
 import FolderDetails from "./pages/dashboard/FolderDetails";
+import FileViewer from "./pages/dashboard/FileViewer";
+import AiChat from "./pages/dashboard/AiChat";
+import Quizes from "./pages/dashboard/Quizes";
+import Analytics from "./pages/dashboard/Analytics";
+import Settings from "./pages/dashboard/Settings";
 
 function App() {
   return (
@@ -39,12 +44,17 @@ function App() {
           <Route element={<ProtectedRoute> <DashboardLayout /> </ProtectedRoute>}>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/myfolders" element={<MyFolders />} />
-            <Route path="/folder/:id" element={<FolderDetails />} />
+            <Route path="/myfolders/:id" element={<FolderDetails />} />
+            <Route path="/myfolders/file/:fileId" element={<FileViewer />} />
+            <Route path="/ai-chat" element={<AiChat />} />
+            <Route path="/quizes" element={<Quizes />} />
+            <Route path="/analytics" element={<Analytics />} />
+            <Route path="/settings" element={<Settings />} />
           </Route>
 
           {/* 404 */}
           <Route path="*" element={<NotFound />} />
-          
+
         </Routes>
       </BrowserRouter>
 

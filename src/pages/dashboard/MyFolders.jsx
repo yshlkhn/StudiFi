@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useNavigate } from "react-router-dom";
 
@@ -15,28 +15,7 @@ export default function MyFolders() {
     const [uploadingFolderId, setUploadingFolderId] = useState(null);
     const navigate = useNavigate();
 
-    useEffect(() => {
-        const getUser = async () => {
-            const { data } = await supabase.auth.getUser();
-            if (data.user) {
-                setUser(data.user);
-                fetchFolders(data.user.id);
-            }
-        };
-        getUser();
-    }, []);
-
-    useEffect(() => {
-        if (message) {
-            const timer = setTimeout(() => {
-                setMessage(null);
-            }, 2000);
-
-            return () => clearTimeout(timer);
-        }
-    }, [message]);
-
-    const fetchFolders = async (userId) => {
+    const fetchFolders = useCallback(async (userId) => {
         setLoading(true);
 
         const { data, error } = await supabase
@@ -52,7 +31,28 @@ export default function MyFolders() {
         }
 
         setLoading(false);
-    };
+    }, []);
+
+    useEffect(() => {
+        const getUser = async () => {
+            const { data } = await supabase.auth.getUser();
+            if (data.user) {
+                setUser(data.user);
+                fetchFolders(data.user.id);
+            }
+        };
+        getUser();
+    }, [fetchFolders]);
+
+    useEffect(() => {
+        if (message) {
+            const timer = setTimeout(() => {
+                setMessage(null);
+            }, 2000);
+
+            return () => clearTimeout(timer);
+        }
+    }, [message]);
 
     const createFolder = async () => {
         if (!newFolderName.trim()) {
@@ -179,7 +179,6 @@ export default function MyFolders() {
 
         for (let file of filesArray) {
 
-            // ❌ Type validation
             if (!allowedTypes.includes(file.type)) {
                 setMessage({
                     type: "error",
@@ -189,7 +188,6 @@ export default function MyFolders() {
                 continue;
             }
 
-            // ❌ Size validation (10MB limit)
             if (file.size > 10 * 1024 * 1024) {
                 setMessage({
                     type: "error",
@@ -199,7 +197,9 @@ export default function MyFolders() {
                 continue;
             }
 
-            const filePath = `${user.id}/${folderId}/${Date.now()}-${file.name}`;
+            const safeName = file.name.replace(/[^\w.-]/g, "_");
+            const uniqueName = `${Date.now()}-${Math.random().toString(36).substring(2)}-${safeName}`;
+            const filePath = `${user.id}/${folderId}/${uniqueName}`;
 
             const { error: uploadError } = await supabase.storage
                 .from("study-files")
@@ -264,6 +264,21 @@ export default function MyFolders() {
 
             <main className="relative z-10 px-5 py-6 lg:px-12 lg:py-10 max-w-340 mx-auto w-full">
 
+                <button
+                    onClick={() => navigate(-1)}
+                    className="group flex items-center gap-2 text-sm text-brand-secondary hover:text-[#f5ba65] mb-2 transition"
+                >
+                    <svg
+                        className="w-4 h-4 group-hover:-translate-x-1 transition"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                    >
+                        <path strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                    <span className="group-hover:underline">Go Back</span>
+                </button>
+
                 {/* Header */}
                 <div className="mb-6">
                     <h1 className="text-2xl font-bold text-white">My Folders</h1>
@@ -285,16 +300,19 @@ export default function MyFolders() {
                 )}
 
                 {/* Create Folder */}
-                <div className="mb-8 rounded-xl border-white/10 bg-white/5 p-5 flex gap-3 backdrop-blur-sm">
+                <div className="mb-8 rounded-2xl border-white/10 bg-linear-to-r from-white/5 to-white/2 p-5 flex flex-col sm:flex-row gap-3 backdrop-blur-sm">
                     <input
+                        type="text"
                         value={newFolderName}
                         onChange={(e) => setNewFolderName(e.target.value)}
                         placeholder="Enter folder name..."
-                        className="flex-1 px-4 py-2.5 bg-[#0f1e35] border-white/10 rounded-lg text-white text-sm outline-none focus:border-[#f5ba65] transition"
+                        name="folderName"
+                        autoComplete="off"
+                        className="flex-1 px-4 py-2.5 bg-[#0f1e35] border border-white/10 rounded-xl text-white text-sm outline-none focus:border-[#f5ba65] focus:ring-1 focus:ring-[#f5ba65]/20 transition"
                     />
                     <button
                         onClick={createFolder}
-                        className=" flex gap-2 items-center cursor-pointer px-5 py-2.5 bg-brand-secondary text-[#12233d] font-semibold rounded-lg hover:bg-[#f5ba65] transition"
+                        className="flex gap-2 items-center justify-center cursor-pointer px-5 py-2.5 bg-brand-secondary text-[#12233d] font-semibold rounded-xl hover:bg-[#f5ba65] hover:shadow-lg hover:shadow-[#f5ba65]/20 transition"
                     >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -305,32 +323,36 @@ export default function MyFolders() {
 
                 {/* Loading */}
                 {loading ? (
-                    <p className="text-white/40 text-sm">Loading folders...</p>
-                ) : folders.length === 0 ? (
                     <div className="flex items-center justify-center h-60">
+                        <p className="text-white/40 text-sm animate-pulse">Loading folders...</p>
+                    </div>
+                ) : folders.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-60 rounded-2xl border border-dashed border-white/10 bg-white/5">
+                        <svg className="w-14 h-14 text-white/20 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                        </svg>
                         <p className="text-white/60 text-sm text-center">
-                            No folders found 📁 <br />
-                            Create your first folder to get started!
+                            No folders yet <br />
+                            <span className="text-white/40">Create your first folder to get started</span>
                         </p>
                     </div>
                 ) : (
-                    <div className="grid sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-5 items-start">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 items-start">
                         {folders.map((folder) => (
                             <div
                                 key={folder.id}
-                                className="group flex flex-col justify-between rounded-2xl border border-white/10 bg-linear-to-b from-white/5 to-white/2 p-5"
+                                className="group relative flex flex-col justify-between rounded-xl border border-white/10 bg-white/5 p-4 hover:border-white/20 transition"
                             >
-                                {/* Top Section */}
-                                <div>
-                                    {/* Header */}
-                                    <div className="flex items-center gap-3 mb-4">
-                                        <div className="p-2 rounded-lg bg-[#0f1e35] border border-white/10">
+                                {/* Header with Delete + Open inline */}
+                                <div className="flex items-start justify-between gap-2 mb-3">
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                        <div className="p-2 rounded-lg bg-[#0f1e35] border-white/10">
                                             <svg className="w-5 h-5 text-[#f5ba65]" fill="currentColor" viewBox="0 0 20 20">
                                                 <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
                                             </svg>
                                         </div>
 
-                                        <div className="flex flex-col overflow-hidden">
+                                        <div className="flex-1 min-w-0">
                                             <h3 className="text-white font-semibold text-sm truncate">
                                                 {folder.name}
                                             </h3>
@@ -344,54 +366,87 @@ export default function MyFolders() {
                                         </div>
                                     </div>
 
-                                    {/* Divider */}
-                                    <div className="h-px bg-white/10 mb-4" />
+                                    {/* Actions: Open + Delete */}
+                                    <div className="flex items-center gap-1">
+                                        {/* Open btn */}
+                                        <button
+                                            onClick={() => navigate(`/myfolders/${folder.id}`)}
+                                            className="p-1.5 rounded-md text-white/40 hover:text-brand-secondary hover:bg-white/10 transition"
+                                            title="Open Folder"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                            </svg>
+                                        </button>
 
-                                    {/* File Input */}
-                                    <input
-                                        id={`file-${folder.id}`}
-                                        type="file"
-                                        multiple
-                                        accept=".pdf,.doc,.docx,.ppt,.pptx"
-                                        className="hidden"
-                                        onChange={(e) =>
-                                            setFolderFiles({
-                                                ...folderFiles,
-                                                [folder.id]: e.target.files,
-                                            })
-                                        }
-                                    />
+                                        {/* Delete btn */}
+                                        <button
+                                            onClick={() => {
+                                                setFolderToDelete(folder.id);
+                                                setShowConfirm(true);
+                                            }}
+                                            className="p-1.5 rounded-md text-white/40 hover:text-red-400 hover:bg-red-500/10 transition"
+                                            title="Delete Folder"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                                    d="M19 7l-1 12a2 2 0 01-2 2H8a2 2 0 01-2-2L5 7m5 4v6m4-6v6M9 7h6m-7 0l1-2h4l1 2" />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
 
-                                    {/* Choose Button */}
-                                    <label
-                                        htmlFor={`file-${folder.id}`}
-                                        className="flex items-center justify-center gap-2 w-full cursor-pointer py-2.5 px-4 bg-[#0f1e35] border border-white/10 text-white/80 rounded-lg hover:bg-[#162845] hover:border-[#f5ba65]/30 text-sm transition"
-                                    >
-                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                                        </svg>
-                                        Choose Files
-                                    </label>
+                                {/* Divider */}
+                                <div className="h-px bg-white/10 mb-3" />
 
-                                    {/* File status */}
-                                    <p className="text-xs text-brand-secondary mt-2 text-center h-4">
+                                {/* File Input */}
+                                <input
+                                    id={`file-${folder.id}`}
+                                    type="file"
+                                    multiple
+                                    accept=".pdf,.doc,.docx,.ppt,.pptx"
+                                    className="hidden"
+                                    onChange={(e) =>
+                                        setFolderFiles({
+                                            ...folderFiles,
+                                            [folder.id]: e.target.files,
+                                        })
+                                    }
+                                />
+
+                                {/* Choose Button - always visible */}
+                                <label
+                                    htmlFor={`file-${folder.id}`}
+                                    className="flex items-center justify-center gap-2 w-full cursor-pointer py-2 px-3 bg-[#0f1e35] border border-white/10 text-white/80 rounded-lg hover:bg-[#162845] text-xs transition"
+                                >
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                    </svg>
+                                    Choose Files
+                                </label>
+
+                                {/* File status + Supported files text */}
+                                <div className="mt-2 text-center">
+                                    <p className="text-xs text-[#f5ba65] h-4">
                                         {folderFiles[folder.id]?.length
                                             ? `${folderFiles[folder.id].length} file(s) selected`
                                             : "No file selected"}
                                     </p>
+                                    <p className="text-[10px] text-white/60 mt-1">
+                                        Supported: PDF, DOC, DOCX, PPT, PPTX
+                                    </p>
                                 </div>
 
-                                {/* Bottom Section */}
-                                <div className="mt-4">
-                                    {/* Upload Button */}
+                                {/* Upload Button - only show when files selected */}
+                                {folderFiles[folder.id]?.length > 0 && (
                                     <button
                                         onClick={() => uploadFiles(folder.id)}
-                                        disabled={!folderFiles[folder.id]?.length || uploadingFolderId === folder.id}
-                                        className="w-full py-2.5 bg-brand-secondary text-brand-primary cursor-pointer font-semibold rounded-lg hover:bg-brand-secondary/90 text-sm disabled:opacity-40 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
+                                        disabled={uploadingFolderId === folder.id}
+                                        className="mt-3 w-full py-2 bg-brand-secondary text-[#12233d] cursor-pointer font-semibold rounded-lg hover:bg-[#f5ba65] text-xs disabled:opacity-40 disabled:cursor-not-allowed transition flex items-center justify-center gap-1.5"
                                     >
                                         {uploadingFolderId === folder.id ? (
                                             <>
-                                                <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
                                                     <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25" />
                                                     <path fill="currentColor" className="opacity-75" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                                                 </svg>
@@ -401,34 +456,7 @@ export default function MyFolders() {
                                             "Upload Files"
                                         )}
                                     </button>
-
-                                    {/* Actions */}
-                                    <div className="mt-4 flex items-center justify-between">
-                                        <button
-                                            onClick={() => {
-                                                setFolderToDelete(folder.id);
-                                                setShowConfirm(true);
-                                            }}
-                                            className="flex gap-1 text-red-400 hover:text-red-500 text-sm hover:underline transition cursor-pointer"
-                                        >
-                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                                                    d="M19 7l-1 12a2 2 0 01-2 2H8a2 2 0 01-2-2L5 7m5 4v6m4-6v6M9 7h6m-7 0l1-2h4l1 2" />
-                                            </svg>
-                                            Delete
-                                        </button>
-
-                                        <button
-                                            onClick={() => navigate(`/folder/${folder.id}`)}
-                                            className="flex items-center gap-1 text-sm text-brand-secondary hover:underline transition cursor-pointer"
-                                        >
-                                            Open
-                                            <svg className="w-4 h-4 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                                            </svg>
-                                        </button>
-                                    </div>
-                                </div>
+                                )}
                             </div>
                         ))}
                     </div>

@@ -3,11 +3,34 @@ import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { useNavigate } from "react-router-dom";
-import { FolderOpen, Brain, Search, Bell, Upload, Sparkles, FileText, Image as ImageIcon, ChevronRight, Flame, Send, AlertCircle, } from "lucide-react";
+import { FolderOpen, Brain, Sparkles, FileText, Image as ImageIcon, ChevronRight, Flame, Send, AlertCircle, } from "lucide-react";
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, BarChart, Bar, Cell, CartesianGrid, } from "recharts";
+import { useCallback } from "react";
 
+const formatTimeAgo = (date) => {
+    if (!date) return "";
 
-// TODO: replace with real data fetched from Supabase/your API
+    // ✅ FORCE UTC
+    const created = new Date(date + "Z");
+    const now = new Date();
+
+    const diffMs = now - created;
+    const seconds = Math.floor(diffMs / 1000);
+
+    if (seconds < 60) return "Just now";
+
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d ago`;
+
+    return created.toLocaleDateString();
+};
+
 const MOCK_STATS = [
     { label: "Documents", value: "24", sub: "+3 this week", icon: FileText },
     { label: "Summaries", value: "18", sub: "AI-generated", icon: Sparkles },
@@ -109,7 +132,7 @@ export default function Dashboard() {
     const [recentFolders, setRecentFolders] = useState([]);
     const navigate = useNavigate();
 
-    const fetchRecentFolders = async (userId) => {
+    const fetchRecentFolders = useCallback(async (userId) => {
         const { data: folders, error } = await supabase
             .from("folders")
             .select(`
@@ -127,48 +150,17 @@ export default function Dashboard() {
             return;
         }
 
-        const formatted = await Promise.all(
-            folders.map(async (f) => {
-                const { count } = await supabase
-                    .from("files")
-                    .select("*", { count: "exact", head: true })
-                    .eq("folder_id", f.id);
-
-                return {
-                    id: f.id,
-                    name: f.name,
-                    docs: count || 0,
-                    progress: Math.floor(Math.random() * 100),
-                    updated: formatTimeAgo(f.created_at),
-                };
-            })
-        );
+        const formatted = (folders || []).map((f) => ({
+            id: f.id,
+            name: f.name,
+            docs: f.files?.[0]?.count || 0,
+            progress: Math.floor(Math.random() * 100),
+            updated: formatTimeAgo(f.created_at),
+        }));
 
         setRecentFolders(formatted);
-    };
-    const formatTimeAgo = (date) => {
-        if (!date) return "";
 
-        // ✅ FORCE UTC
-        const created = new Date(date + "Z");
-        const now = new Date();
-
-        const diffMs = now - created;
-        const seconds = Math.floor(diffMs / 1000);
-
-        if (seconds < 60) return "Just now";
-
-        const minutes = Math.floor(seconds / 60);
-        if (minutes < 60) return `${minutes}m ago`;
-
-        const hours = Math.floor(minutes / 60);
-        if (hours < 24) return `${hours}h ago`;
-
-        const days = Math.floor(hours / 24);
-        if (days < 7) return `${days}d ago`;
-
-        return created.toLocaleDateString();
-    };
+    }, []);
 
     useEffect(() => {
         const loadUser = async () => {
@@ -200,7 +192,7 @@ export default function Dashboard() {
         };
 
         loadUser();
-    }, []);
+    }, [fetchRecentFolders]);
 
     return (
         <div className="relative min-h-full bg-brand-primary">
@@ -313,8 +305,8 @@ export default function Dashboard() {
                                 ) : (
                                     recentFolders.map((f) => (
                                         <div
-                                            onClick={() => navigate(`/folder/${f.id}`)}
-                                            key={f.name}
+                                            onClick={() => navigate(`/myfolders/${f.id}`)}
+                                            key={f.id}
                                             className="flex items-center gap-4 pl-4 pr-4 py-3.5 hover:bg-white/3 transition-colors cursor-pointer group"
                                         >
                                             <div className="w-1 self-stretch rounded-full bg-brand-secondary/40 group-hover:bg-brand-secondary transition-colors shrink-0" />
