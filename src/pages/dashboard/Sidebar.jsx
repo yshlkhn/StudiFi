@@ -11,6 +11,8 @@ export default function Sidebar() {
     const [navOpen, setNavOpen] = useState(false);
     const [loadingUser, setLoadingUser] = useState(true);
     const [user, setUser] = useState(null);
+    const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+    const [loggingOut, setLoggingOut] = useState(false);
     const navigate = useNavigate();
 
     const NAV_ITEMS = [
@@ -26,17 +28,27 @@ export default function Sidebar() {
         let mounted = true;
 
         const loadUser = async () => {
-            const { data, error } = await supabase.auth.getUser();
+            
+            const { data, error } = await supabase.auth.getSession();
+
             if (!mounted) return;
-            if (error) console.error("Failed to load user:", error.message);
-            setUser(data?.user ?? null);
+
+            if (error) {
+                console.error("Failed to load session:", error.message);
+            }
+
+            setUser(data.session?.user ?? null);
             setLoadingUser(false);
         };
+
         loadUser();
 
-        const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-            setUser(session?.user ?? null);
-        });
+        const { data: listener } = supabase.auth.onAuthStateChange(
+            (_event, session) => {
+                if (!mounted) return;
+                setUser(session?.user ?? null);
+            }
+        );
 
         return () => {
             mounted = false;
@@ -44,20 +56,31 @@ export default function Sidebar() {
         };
     }, []);
 
-    const fullName = useMemo(
-        () => user?.user_metadata?.full_name?.trim() || user?.email?.split("@")[0] || "Student",
-        [user]
-    );
+    const fullName =
+        user?.user_metadata?.full_name?.trim() ||
+        user?.email?.split("@")[0] ||
+        "Student";
+
     const initial = fullName[0]?.toUpperCase() ?? "S";
 
     const logout = async () => {
-        const { error } = await supabase.auth.signOut();
-        if (error) {
+        setLoggingOut(true);
+
+        try {
+            const { error } = await supabase.auth.signOut();
+
+            if (error) {
+                toast.error("Couldn't log out, try again");
+                return;
+            }
+
+            toast.success("Logged out");
+            navigate("/login");
+        } catch (error) {
             toast.error("Couldn't log out, try again");
-            return;
+        } finally {
+            setLoggingOut(false);
         }
-        toast.success("Logged out");
-        navigate("/login");
     };
 
     return (
@@ -65,7 +88,7 @@ export default function Sidebar() {
             {/* mobile nav toggle */}
             <button
                 onClick={() => setNavOpen(true)}
-                className="lg:hidden fixed top-4 left-4 z-30 p-2 rounded-lg bg-white/5 border border-white/10 backdrop-blur-sm"
+                className="lg:hidden fixed top-4 right-4 z-30 p-2 rounded-lg bg-white/5 border border-white/10 backdrop-blur-sm"
             >
                 <Menu className="w-5 h-5 text-foreground" />
             </button>
@@ -129,10 +152,8 @@ export default function Sidebar() {
                         </div>
                     </div>
                     <button
-                        onClick={logout}
-                        className="w-full cursor-pointer flex items-center justify-center gap-2 px-4 py-2.5
-                            text-white/50 hover:text-white hover:bg-white/5
-                            border border-white/10 font-medium rounded-lg transition-colors duration-150 text-[13px]"
+                        onClick={() => setShowLogoutConfirm(true)}
+                        className="w-full py-2 bg-brand-secondary text-[#12233d] cursor-pointer font-semibold rounded-lg hover:bg-[#f5ba65] text-xs transition flex items-center justify-center gap-1.5"
                     >
                         <LogOut className="w-3.5 h-3.5" />
                         Log out
@@ -142,6 +163,67 @@ export default function Sidebar() {
 
             {navOpen && (
                 <div onClick={() => setNavOpen(false)} className="fixed inset-0 bg-black/60 z-30 lg:hidden" />
+            )}
+
+            {/* Confirm Logout Modal */}
+            {showLogoutConfirm && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                    <div className="bg-[#0f1e35] border border-white/10 rounded-2xl p-6 w-full max-w-sm">
+                        <h2 className="text-white font-semibold mb-2">
+                            Log out?
+                        </h2>
+
+                        <p className="text-white/50 text-sm mb-5">
+                            Are you sure you want to log out of your account?
+                        </p>
+
+                        <div className="flex justify-end gap-3">
+                            <button
+                                onClick={() => setShowLogoutConfirm(false)}
+                                disabled={loggingOut}
+                                className="px-4 py-2 text-white/60 hover:text-white text-sm transition disabled:opacity-40"
+                            >
+                                Cancel
+                            </button>
+
+                            <button
+                                onClick={async () => {
+                                    await logout();
+                                    setShowLogoutConfirm(false);
+                                }}
+                                disabled={loggingOut}
+                                className="px-4 py-2 bg-red-500 text-white cursor-pointer rounded-lg text-sm hover:bg-red-600 transition flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                {loggingOut ? (
+                                    <>
+                                        <svg
+                                            className="w-4 h-4 animate-spin"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                        >
+                                            <circle
+                                                cx="12"
+                                                cy="12"
+                                                r="10"
+                                                stroke="currentColor"
+                                                strokeWidth="4"
+                                                className="opacity-25"
+                                            />
+                                            <path
+                                                fill="currentColor"
+                                                className="opacity-75"
+                                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                                            />
+                                        </svg>
+                                        Logging out...
+                                    </>
+                                ) : (
+                                    "Log out"
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
         </>
     )

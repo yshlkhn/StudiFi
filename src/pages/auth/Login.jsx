@@ -1,12 +1,12 @@
 import { motion } from 'framer-motion'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { Mail, Lock, ArrowRight, Eye, EyeOff } from 'lucide-react'
-import DotField from '@/components/ui/DotField'
-import Logo from "@/assets/logo_header.svg"
-import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabaseClient'
 import { toast } from "react-toastify"
+
+import DotField from '@/components/ui/DotField'
+import Logo from "@/assets/logo_header.svg"
 
 export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
@@ -19,66 +19,7 @@ export default function LoginPage() {
   const [error, setError] = useState(null)
   const navigate = useNavigate()
 
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-
-    setError(null)
-    setLoading(true)
-
-    // 1. REQUIRED FIELDS
-    if (!form.email && !form.password) {
-      setError("Email and password are required")
-      setLoading(false)
-      return
-    }
-
-    if (!form.email) {
-      setError("Email is required")
-      setLoading(false)
-      return
-    }
-
-    if (!form.password) {
-      setError("Password is required")
-      setLoading(false)
-      return
-    }
-
-    // 2. EMAIL FORMAT CHECK
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    if (!emailRegex.test(form.email)) {
-      setError("Please enter a valid email address")
-      setLoading(false)
-      return
-    }
-
-    // 3. SUPABASE LOGIN
-    const { error: authError } = await supabase.auth.signInWithPassword({
-      email: form.email,
-      password: form.password,
-    })
-
-    setLoading(false)
-
-    // 4. SUPABASE ERROR HANDLING
-    if (authError) {
-      if (authError.message.includes("Invalid login credentials")) {
-        setError("Incorrect email or password")
-      } else {
-        setError(error.message)
-      }
-      return
-    }
-
-    toast.success("Login successful")
-
-    setTimeout(() => {
-      navigate("/dashboard")
-    }, 1000)
-  }
-
-  const mapAuthError = (msg) => {
+  const mapAuthError = (msg = "") => {
     if (msg.includes("Invalid login credentials")) {
       return "Incorrect email or password"
     }
@@ -90,6 +31,61 @@ export default function LoginPage() {
     }
     return msg
   }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    if (loading) return;
+
+    setError(null);
+
+    const email = form.email.trim();
+    const password = form.password;
+
+    try {
+      setLoading(true);
+
+      // Validation
+      if (!email && !password) {
+        throw new Error("Email and password are required");
+      }
+
+      if (!email) {
+        throw new Error("Email is required");
+      }
+
+      if (!password) {
+        throw new Error("Password is required");
+      }
+
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+      if (!emailRegex.test(email)) {
+        throw new Error("Please enter a valid email address");
+      }
+
+      const { error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (authError) {
+        throw new Error(mapAuthError(authError.message));
+      }
+
+      toast.success("Login successful");
+      navigate("/dashboard", {
+        replace: true,
+      });
+
+
+    } catch (err) {
+      setError(err.message);
+
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-brand-primary flex items-center justify-center px-4 py-12 relative overflow-hidden">
@@ -142,14 +138,18 @@ export default function LoginPage() {
           <form onSubmit={handleSubmit} noValidate className="space-y-4">
             {/* Email */}
             <div>
-              <label className="block text-sm font-medium text-foreground mb-1.5">
+              <label htmlFor="email"
+                className="block text-sm font-medium text-foreground mb-1.5">
                 Email Address
               </label>
               <div className="relative">
                 <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input
+                  id='email'
                   type="email"
                   required
+                  name='email'
+                  autoComplete='off'
                   value={form.email}
                   onChange={(e) => setForm({ ...form, email: e.target.value })}
                   placeholder="you@example.com"
@@ -161,7 +161,8 @@ export default function LoginPage() {
             {/* Password */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="text-sm font-medium text-foreground">Password</label>
+                <label htmlFor="password"
+                  className="text-sm font-medium text-foreground">Password</label>
                 <Link to="/forgot-password" className="text-xs text-[#efa943] hover:underline">
                   Forgot password?
                 </Link>
@@ -169,8 +170,11 @@ export default function LoginPage() {
               <div className="relative">
                 <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input
+                id='password'
                   type={showPassword ? 'text' : 'password'}
                   required
+                  name='password'
+                  autoComplete='off'
                   value={form.password}
                   onChange={(e) => setForm({ ...form, password: e.target.value })}
                   placeholder="••••••••"

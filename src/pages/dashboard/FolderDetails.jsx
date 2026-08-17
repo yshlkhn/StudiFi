@@ -1,13 +1,14 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { fetchFiles } from "@/services/files";
 import { supabase } from "@/lib/supabaseClient";
 
 export default function FolderDetails() {
     const { id } = useParams();
     const navigate = useNavigate();
+    const queryClient = useQueryClient();
 
-    const [files, setFiles] = useState([]);
-    const [loading, setLoading] = useState(true);
     const [signedUrls, setSignedUrls] = useState({});
     const [deletingId, setDeletingId] = useState(null);
     const [message, setMessage] = useState(null);
@@ -17,6 +18,41 @@ export default function FolderDetails() {
     const [headerFiles, setHeaderFiles] = useState([]);
     const [uploading, setUploading] = useState(false);
 
+    const {
+        data: files = [],
+        isLoading: loading,
+    } = useQuery({
+        queryKey: ["files", id],
+        queryFn: () => fetchFiles(id),
+        enabled: !!id,
+        staleTime: 1000 * 60 * 5,
+    });
+
+    useEffect(() => {
+        const generateUrls = async () => {
+            const urlEntries = await Promise.all(
+                files.map(async (file) => {
+                    const { data: signed } = await supabase
+                        .storage
+                        .from("study-files")
+                        .createSignedUrl(file.file_path, 3600);
+
+                    if (!signed) return null;
+
+                    return [file.id, signed.signedUrl];
+                })
+            );
+
+            setSignedUrls(
+                Object.fromEntries(urlEntries.filter(Boolean))
+            );
+        };
+
+        if (files.length) {
+            generateUrls();
+        }
+
+    }, [files]);
     useEffect(() => {
         const checkUser = async () => {
             const { data: { user } } = await supabase.auth.getUser();
@@ -28,57 +64,6 @@ export default function FolderDetails() {
 
         checkUser();
     }, []);
-
-    const fetchFiles = async () => {
-        setLoading(true);
-
-        const { data, error } = await supabase
-            .from("files")
-            .select("*")
-            .eq("folder_id", id)
-            .order("created_at", { ascending: false });
-
-        if (error) {
-            console.error("Fetch error:", error);
-            setLoading(false);
-            return;
-        }
-
-        setFiles(data || []);
-
-        const urlEntries = await Promise.all(
-            (data || []).map(async (file) => {
-                const { data: signed, error } = await supabase
-                    .storage
-                    .from("study-files")
-                    .createSignedUrl(file.file_path, 60 * 60);
-
-                if (error || !signed) return null;
-                return [file.id, signed.signedUrl];
-            })
-        );
-
-        const urls = Object.fromEntries(urlEntries.filter(Boolean));
-        setSignedUrls(urls);
-
-        setLoading(false);
-    };
-
-    useEffect(() => {
-        let isMounted = true;
-
-        const load = async () => {
-            if (!id) return;
-
-            await fetchFiles();
-        };
-
-        load();
-
-        return () => {
-            isMounted = false;
-        };
-    }, [id]);
 
     useEffect(() => {
         if (message) {
@@ -121,7 +106,18 @@ export default function FolderDetails() {
             }
 
             // 3. Update UI
-            setFiles(prev => prev.filter(f => f.id !== file.id));
+            setMessage({
+                type: "success",
+                text: "File deleted successfully!"
+            });
+
+            queryClient.invalidateQueries({
+                queryKey: ["files", id],
+            });
+
+            queryClient.invalidateQueries({
+                queryKey: ["recentFolders"],
+            });
 
             setSignedUrls(prev => {
                 const updated = { ...prev };
@@ -218,7 +214,14 @@ export default function FolderDetails() {
 
         if (!hasError) {
             setMessage({ type: "success", text: "Files uploaded!" });
-            fetchFiles(); // refresh list
+
+            queryClient.invalidateQueries({
+                queryKey: ["files", id],
+            });
+
+            queryClient.invalidateQueries({
+                queryKey: ["recentFolders"],
+            });
         }
 
         setHeaderFiles([]);
@@ -376,7 +379,7 @@ export default function FolderDetails() {
                                 </div>
 
                                 {/* Right Actions */}
-                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+                                <div className="flex items-center gap-1 transition">
 
                                     <button
                                         onClick={() => navigate(`/myfolders/file/${file.id}`)}
@@ -394,7 +397,7 @@ export default function FolderDetails() {
                                             setShowConfirm(true);
                                         }}
                                         disabled={deletingId === file.id}
-                                        className="group/del p-2 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-500/20 cursor-pointer transition disabled:opacity-50"
+                                        className="group/del p-2 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-500/20 transition disabled:opacity-50"
                                     >
                                         {deletingId === file.id ? (
                                             <span className="text-xs">...</span>

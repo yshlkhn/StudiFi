@@ -1,8 +1,8 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
+import "@/styles/toast.css";
 
-import LandingPage from "./pages/Landing/LandingPage";
 import Login from "./pages/auth/Login";
 import Signup from "./pages/auth/Signup";
 import TermsOfService from "./components/Layout/TermsOfServices";
@@ -24,6 +24,7 @@ import AiChat from "./pages/dashboard/AiChat";
 import Quizes from "./pages/dashboard/Quizes";
 import Analytics from "./pages/dashboard/Analytics";
 import Settings from "./pages/dashboard/Settings";
+import HomeRedirect from "./pages/HomeRedirect";
 
 function App() {
   return (
@@ -32,7 +33,7 @@ function App() {
         <Routes>
 
           {/* Public */}
-          <Route path="/" element={<LandingPage />} />
+          <Route path="/" element={<HomeRedirect />} />
           <Route path="/terms" element={<TermsOfService />} />
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -67,6 +68,9 @@ function App() {
         pauseOnHover
         draggable
         theme="dark"
+        toastClassName="studifi-toast"
+        bodyClassName="studifi-toast-body"
+        progressClassName="studifi-toast-progress"
       />
     </>
   );

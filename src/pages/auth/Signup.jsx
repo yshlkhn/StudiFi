@@ -31,58 +31,53 @@ export default function SignupPage() {
 
 
   const handleSubmit = async (e) => {
-    e.preventDefault()
-    setLoading(true)
-    setError(null)
+    e.preventDefault();
 
-    // 1. Check empty fields
-    if (!form.name || !form.email || !form.password) {
-      setLoading(false)
-      setError("All fields are required")
-      return
-    }
+    if (loading) return;
 
-    // 2. Validate email
-    if (!isValidEmail(form.email)) {
-      setLoading(false)
-      setError("Please enter a valid email address")
-      return
-    }
+    setError(null);
+    setLoading(true);
 
-    // 3. Validate password strength
-    if (!isStrongPassword(form.password)) {
-      setLoading(false)
-      setError(
-        "Password must include uppercase, lowercase, number, and special character"
-      )
-      return
-    }
-
-    // 4. Supabase signup
-    const { data, error: authError } = await supabase.auth.signUp({
-      email: form.email,
-      password: form.password,
-      options: {
-        data: {
-          full_name: form.name,
-        }
+    try {
+      if (!form.name || !form.email || !form.password) {
+        throw new Error("All fields are required");
       }
-    })
 
-    setLoading(false)
+      if (!isValidEmail(form.email)) {
+        throw new Error("Please enter a valid email address");
+      }
 
-    if (authError) {
-      setError(authError.message)
-      setLoading(false)
-      return
+      if (!isStrongPassword(form.password)) {
+        throw new Error(
+          "Password must be 8+ characters and include uppercase, lowercase, number, and special character"
+        );
+      }
+
+      const { error: authError } = await supabase.auth.signUp({
+        email: form.email.trim(),
+        password: form.password,
+        options: {
+          data: {
+            full_name: form.name.trim(),
+          },
+        },
+      });
+
+      if (authError) {
+        throw new Error(authError.message);
+      }
+
+      toast.success("Account created successfully");
+      navigate("/dashboard", {
+        replace: true
+      });
+
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
-
-    toast.success("Account created successfully")
-
-    setTimeout(() => {
-      navigate("/dashboard")
-    }, 1000)
-  }
+  };
 
   return (
     <div className="min-h-screen bg-brand-primary flex items-center justify-center px-4 pt-8 py-12 relative overflow-hidden">
@@ -132,14 +127,16 @@ export default function SignupPage() {
           <form onSubmit={handleSubmit} noValidate className="space-y-3">
             {/* Name */}
             <div>
-              <label className="block text-sm font-medium text-foreground mb-1.5">
+              <label htmlFor="name" className="block text-sm font-medium text-foreground mb-1.5">
                 Full Name
               </label>
               <div className="relative">
                 <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input
+                  id='name'
                   type="text"
                   required
+                  autoComplete='off'
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   placeholder="Your Name"
@@ -150,14 +147,17 @@ export default function SignupPage() {
 
             {/* Email */}
             <div>
-              <label className="block text-sm font-medium text-foreground mb-1.5">
+              <label htmlFor="email"
+                className="block text-sm font-medium text-foreground mb-1.5">
                 Email Address
               </label>
               <div className="relative">
                 <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input
+                  id='email'
                   type="email"
                   required
+                  autoComplete='off'
                   value={form.email}
                   onChange={(e) => setForm({ ...form, email: e.target.value })}
                   placeholder="you@example.com"
@@ -168,14 +168,17 @@ export default function SignupPage() {
 
             {/* Password */}
             <div>
-              <label className="block text-sm font-medium text-foreground mb-1.5">
+              <label htmlFor="password"
+                className="block text-sm font-medium text-foreground mb-1.5">
                 Password
               </label>
               <div className="relative">
                 <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input
+                id='passowrd'
                   type={showPassword ? 'text' : 'password'}
                   required
+                  autoComplete='off'
                   placeholder="Min. 8 characters"
                   minLength={8}
                   value={form.password}

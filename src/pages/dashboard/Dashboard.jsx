@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { useNavigate } from "react-router-dom";
-import { FolderOpen, Brain, Sparkles, FileText, Image as ImageIcon, ChevronRight, Flame, Send, AlertCircle, } from "lucide-react";
+import { FolderOpen, Brain, Sparkles, FileText, ChevronRight, Flame, Send, AlertCircle, } from "lucide-react";
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, BarChart, Bar, Cell, CartesianGrid, } from "recharts";
-import { useCallback } from "react";
+import { useAuth } from "@/context/AuthContext";
+import { useQuery } from "@tanstack/react-query";
+import { fetchRecentFolders } from "@/services/folders";
 
 const formatTimeAgo = (date) => {
     if (!date) return "";
@@ -127,72 +128,27 @@ function Eyebrow({ children }) {
 }
 
 export default function Dashboard() {
-    const [firstName, setFirstName] = useState(null);
-    const [loadingUser, setLoadingUser] = useState(true);
-    const [recentFolders, setRecentFolders] = useState([]);
+
     const navigate = useNavigate();
 
-    const fetchRecentFolders = useCallback(async (userId) => {
-        const { data: folders, error } = await supabase
-            .from("folders")
-            .select(`
-            id,
-            name,
-            created_at,
-            files(count)
-        `)
-            .eq("user_id", userId)
-            .order("created_at", { ascending: false })
-            .limit(3);
+    const { user, loading: loadingUser } = useAuth();
 
-        if (error) {
-            console.error(error);
-            return;
-        }
+    const firstName = loadingUser
+        ? ""
+        : user?.user_metadata?.full_name?.split(" ")[0] ||
+        user?.email?.split("@")[0] ||
+        "Student";
 
-        const formatted = (folders || []).map((f) => ({
-            id: f.id,
-            name: f.name,
-            docs: f.files?.[0]?.count || 0,
-            progress: Math.floor(Math.random() * 100),
-            updated: formatTimeAgo(f.created_at),
-        }));
-
-        setRecentFolders(formatted);
-
-    }, []);
-
-    useEffect(() => {
-        const loadUser = async () => {
-            try {
-                const { data, error } = await supabase.auth.getUser();
-
-                if (error) {
-                    console.error("Auth error:", error.message);
-                    return;
-                }
-
-                const user = data?.user;
-
-                const name =
-                    user?.user_metadata?.full_name ||
-                    user?.email?.split("@")[0] ||
-                    "Student";
-
-                if (user) {
-                    fetchRecentFolders(user.id);
-                }
-
-                setFirstName(name.split(" ")[0]);
-            } catch (err) {
-                console.error("Unexpected error:", err);
-            } finally {
-                setLoadingUser(false);
-            }
-        };
-
-        loadUser();
-    }, [fetchRecentFolders]);
+    const {
+        data: recentFolders = [],
+        isLoading: foldersLoading,
+        isError: foldersError,
+    } = useQuery({
+        queryKey: ["recentFolders", user?.id],
+        queryFn: () => fetchRecentFolders(user.id),
+        enabled: Boolean(user?.id),
+        staleTime: 1000 * 60 * 5,
+    });
 
     return (
         <div className="relative min-h-full bg-brand-primary">
@@ -283,7 +239,15 @@ export default function Dashboard() {
                                 </Link>
                             </div>
                             <div className="rounded-xl border border-white/[0.07] bg-white/2 divide-y divide-white/6">
-                                {recentFolders.length === 0 ? (
+                                {foldersLoading ? (
+                                    <div className="flex justify-center py-10 text-white/40">
+                                        Loading folders...
+                                    </div>
+                                ) : foldersError ? (
+                                    <div className="flex justify-center py-10 text-red-400">
+                                        Failed to load folders
+                                    </div>
+                                ) : recentFolders.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center py-10 text-center">
                                         <FolderOpen className="w-10 h-10 text-white/20 mb-3" />
 
@@ -331,7 +295,7 @@ export default function Dashboard() {
                                             </div>
 
                                             <span className="text-[11px] text-white/35 shrink-0 hidden sm:block">
-                                                {f.updated}
+                                                {formatTimeAgo(f.created_at)}
                                             </span>
 
                                             <ChevronRight className="w-3.5 h-3.5 text-white/25 shrink-0" />
@@ -381,6 +345,8 @@ export default function Dashboard() {
                                 </p>
                                 <div className="flex items-center gap-2 bg-[#0f1e35] border border-white/10 focus-within:border-brand-secondary/40 rounded-lg px-3 py-2.5 transition-colors">
                                     <input
+                                        id="name"
+                                        autoComplete="off"
                                         placeholder="Explain binary search trees…"
                                         className="bg-transparent outline-none text-[13px] text-white placeholder:text-white/25 w-full"
                                     />

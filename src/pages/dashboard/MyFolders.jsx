@@ -1,48 +1,31 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useNavigate } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/context/AuthContext";
+import { fetchFolders } from "@/services/folders";
 
 export default function MyFolders() {
-    const [user, setUser] = useState(null);
-    const [folders, setFolders] = useState([]);
     const [newFolderName, setNewFolderName] = useState("");
     const [folderFiles, setFolderFiles] = useState({});
-    const [loading, setLoading] = useState(true);
     const [message, setMessage] = useState(null);
     const [showConfirm, setShowConfirm] = useState(false);
     const [folderToDelete, setFolderToDelete] = useState(null);
     const [deleting, setDeleting] = useState(false);
     const [uploadingFolderId, setUploadingFolderId] = useState(null);
     const navigate = useNavigate();
-
-    const fetchFolders = useCallback(async (userId) => {
-        setLoading(true);
-
-        const { data, error } = await supabase
-            .from("folders")
-            .select("*")
-            .eq("user_id", userId)
-            .order("created_at", { ascending: false });
-
-        if (error) {
-            setMessage({ type: "error", text: "Failed to load folders" });
-        } else {
-            setFolders(data || []);
-        }
-
-        setLoading(false);
-    }, []);
-
-    useEffect(() => {
-        const getUser = async () => {
-            const { data } = await supabase.auth.getUser();
-            if (data.user) {
-                setUser(data.user);
-                fetchFolders(data.user.id);
-            }
-        };
-        getUser();
-    }, [fetchFolders]);
+    const { user } = useAuth();
+    const queryClient = useQueryClient();
+    const {
+        data: folders = [],
+        isLoading: loading,
+        isError,
+    } = useQuery({
+        queryKey: ["folders", user?.id],
+        queryFn: () => fetchFolders(user.id),
+        enabled: !!user?.id,
+        staleTime: 1000 * 60 * 5,
+    });
 
     useEffect(() => {
         if (message) {
@@ -72,7 +55,13 @@ export default function MyFolders() {
         if (error) {
             setMessage({ type: "error", text: error.message });
         } else {
-            setFolders([data, ...folders]);
+            queryClient.setQueryData(
+                ["folders", user.id],
+                (old = []) => [data, ...old]
+            );
+            queryClient.invalidateQueries({
+                queryKey: ["recentFolders", user.id],
+            });
             setNewFolderName("");
             setMessage({ type: "success", text: "Folder created Successfully!" });
         }
@@ -146,7 +135,13 @@ export default function MyFolders() {
             }
 
             // ✅ Success
-            setFolders((prev) => prev.filter((f) => f.id !== folderId));
+            queryClient.setQueryData(
+                ["folders", user.id],
+                (old = []) => old.filter((f) => f.id !== folderId)
+            );
+            queryClient.invalidateQueries({
+                queryKey: ["recentFolders", user.id],
+            });
             setMessage({ type: "success", text: "Folder deleted" });
 
         } catch (err) {
@@ -228,6 +223,9 @@ export default function MyFolders() {
         // ✅ Success only if no errors
         if (!hasError) {
             setMessage({ type: "success", text: "Files uploaded successfully!" });
+            queryClient.invalidateQueries({
+                queryKey: ["recentFolders", user.id],
+            });
         }
 
         // ✅ Reset selected files
@@ -312,7 +310,7 @@ export default function MyFolders() {
                     />
                     <button
                         onClick={createFolder}
-                        className="flex gap-2 items-center justify-center cursor-pointer px-5 py-2.5 bg-brand-secondary text-[#12233d] font-semibold rounded-xl hover:bg-[#f5ba65] hover:shadow-lg hover:shadow-[#f5ba65]/20 transition"
+                        className="flex gap-2 text-sm items-center justify-center cursor-pointer px-5 py-2.5 bg-brand-secondary text-[#12233d] font-semibold rounded-xl hover:bg-[#f5ba65] hover:shadow-lg hover:shadow-[#f5ba65]/20 transition"
                     >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

@@ -2,6 +2,10 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Sparkles } from "lucide-react";
+import { Document, Page, pdfjs } from "react-pdf";
+import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+
+pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
 
 export default function FileViewer() {
   const { fileId } = useParams();
@@ -10,6 +14,12 @@ export default function FileViewer() {
   const [file, setFile] = useState(null);
   const [url, setUrl] = useState(null);
   const [question, setQuestion] = useState("");
+
+  const [numPages, setNumPages] = useState(null);
+
+  const onPDFLoad = ({ numPages }) => {
+    setNumPages(numPages);
+  };
 
   // 🔹 Fetch file ONCE (DB call)
   useEffect(() => {
@@ -57,18 +67,25 @@ export default function FileViewer() {
   // 🔹 Safe file type detection
   const fileName = file?.name?.toLowerCase() || "";
 
-  const isPDF = file?.file_type === "application/pdf";
+  const isPDF =
+    file?.file_type === "application/pdf" ||
+    fileName.endsWith(".pdf");
 
   const isPPT =
     file?.file_type?.includes("presentation") ||
     fileName.endsWith(".ppt") ||
     fileName.endsWith(".pptx");
 
+  const isDOC =
+    file?.file_type?.includes("word") ||
+    fileName.endsWith(".doc") ||
+    fileName.endsWith(".docx");
+
   return (
     <div className="min-h-screen bg-brand-primary px-5 py-6 lg:px-12">
 
       {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-4">
         <button
           onClick={() => navigate(-1)}
           className="group flex items-center gap-2 text-sm text-brand-secondary hover:text-[#f5ba65] transition"
@@ -83,19 +100,19 @@ export default function FileViewer() {
           </svg>
           <span className="group-hover:underline">Go Back</span>
         </button>
+      </div>
 
-        <div className="text-right">
-          <h1 className="text-white font-semibold text-base truncate max-w-xs">
-            {file?.name || "Loading..."}
-          </h1>
-        </div>
+      <div className="text-left mb-2">
+        <h1 className="text-white font-semibold text-xs sm:text-lg">
+          {file?.name || "Loading..."}
+        </h1>
       </div>
 
       {/* Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
         {/* FILE VIEWER */}
-        <div className="lg:col-span-2 bg-linear-to-b from-white/5 to-white/2 rounded-2xl border border-white/10 overflow-hidden flex flex-col">
+        <div className="lg:col-span-2 bg-linear-to-b from-white/5 to-white/2 rounded-md sm:rounded-lg md:rounded-xl lg:rounded-2xl border border-white/10 overflow-hidden flex flex-col">
 
           {/* Viewer toolbar */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-[#0f1e35]/50">
@@ -122,15 +139,54 @@ export default function FileViewer() {
           <div className="flex-1">
             {url ? (
               isPDF ? (
-                <iframe
-                  src={url}
-                  className="w-full h-[80vh]"
-                  title="PDF Viewer"
-                />
+                <div className="bg-[#e5e7eb] max-h-[80vh] overflow-y-auto py-8">
+
+                  <Document
+                    file={url}
+                    onLoadSuccess={onPDFLoad}
+                    loading={
+                      <div className="flex items-center justify-center h-[80vh] text-gray-500">
+                        Loading PDF...
+                      </div>
+                    }
+                    error={
+                      <div className="flex items-center justify-center h-[80vh] text-red-500">
+                        Failed to load PDF
+                      </div>
+                    }
+                  >
+
+                    <div className="flex flex-col items-center gap-6">
+
+                      {Array.from({ length: numPages || 0 }, (_, index) => (
+                        <div
+                          key={`page_${index + 1}`}
+                          className="bg-whiteshadow-xl rounded-sm overflow-hidden w-full max-w-200"
+                        >
+                          <Page
+                            pageNumber={index + 1}
+                            width={675}
+                            className="mx-auto"
+                            renderTextLayer={false}
+                            renderAnnotationLayer={false}
+                          />
+                        </div>
+                      ))}
+
+                    </div>
+                  </Document>
+                </div>
               ) : isPPT ? (
                 <iframe
                   src={`https://docs.google.com/gview?url=${encodeURIComponent(url)}&embedded=true`}
                   className="w-full h-[80vh]"
+                  title="PowerPoint Viewer"
+                />
+              ) : isDOC ? (
+                <iframe
+                  src={`https://docs.google.com/gview?url=${encodeURIComponent(url)}&embedded=true`}
+                  className="w-full h-[80vh]"
+                  title="Word Viewer"
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center h-[80vh] p-6 text-center">

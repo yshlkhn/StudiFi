@@ -146,20 +146,25 @@ export default function Contact() {
                                     const Icon = field.icon
                                     return (
                                         <div key={field.key}>
-                                            <label className="block text-sm font-medium text-brand-accent mb-1.5">
+                                            <label
+                                                htmlFor={field.key}
+                                                className="block text-sm font-medium text-brand-accent mb-1.5"
+                                            >
                                                 {field.label}
                                             </label>
                                             <div className="relative">
                                                 <Icon className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
                                                 <input
+                                                    id={field.key}
                                                     type={field.type}
                                                     name={field.key}
+                                                    autoComplete={field.key === "email" ? "email" : field.key === "name" ? "name" : "off"}
                                                     required
                                                     placeholder={field.placeholder}
                                                     value={formState[field.key]}
                                                     onChange={(e) => {
                                                         setError(null);
-                                                        setFormState((s) => ({ ...s, [field.key]: e.target.value, }));
+                                                        setFormState((s) => ({ ...s, [field.key]: e.target.value }));
                                                     }}
                                                     className="w-full pl-10 pr-4 py-3 rounded-xl text-sm  text-foreground placeholder:text-muted-foreground/70 bg-secondary/50 border border-white/15 focus:border-[rgba(194,60,58,0.5)] focus:outline-none focus:shadow-[0_0_0_3px_rgba(194,60,58,0.12)] transition-all" />
                                             </div>
@@ -170,20 +175,25 @@ export default function Contact() {
 
                             {/* Subject */}
                             <div>
-                                <label className="block text-sm font-medium text-brand-accent mb-1.5">
+                                <label
+                                    htmlFor="subject"
+                                    className="block text-sm font-medium text-brand-accent mb-1.5"
+                                >
                                     Subject
                                 </label>
                                 <div className="relative">
                                     <FileText className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
                                     <input
+                                        id="subject"
                                         type="text"
                                         name="subject"
+                                        autoComplete="off"
                                         required
                                         placeholder="What's this about?"
                                         value={formState.subject}
                                         onChange={(e) => {
                                             setError(null);
-                                            setFormState((s) => ({ ...s, subject: e.target.value }))
+                                            setFormState((s) => ({ ...s, subject: e.target.value }));
                                         }}
                                         className="w-full pl-10 pr-4 py-3 rounded-xl text-sm  text-foreground placeholder:text-muted-foreground/70 bg-secondary/50 border border-white/15 focus:border-[rgba(194,60,58,0.5)] focus:outline-none focus:shadow-[0_0_0_3px_rgba(194,60,58,0.12)] transition-all"
                                     />
@@ -192,20 +202,25 @@ export default function Contact() {
 
                             {/* Message */}
                             <div>
-                                <label className="block text-sm font-medium text-brand-accent mb-1.5">
+                                <label
+                                    htmlFor="message"
+                                    className="block text-sm font-medium text-brand-accent mb-1.5"
+                                >
                                     Message
                                 </label>
                                 <div className="relative">
                                     <MessageSquare className="absolute left-3.5 top-3.5 w-4 h-4 text-muted-foreground/70" />
                                     <textarea
+                                        id="message"
                                         rows={5}
                                         name="message"
+                                        autoComplete="off"
                                         required
                                         placeholder="Tell us more about your project, question, or idea…"
                                         value={formState.message}
                                         onChange={(e) => {
                                             setError(null);
-                                            setFormState((s) => ({ ...s, message: e.target.value }))
+                                            setFormState((s) => ({ ...s, message: e.target.value }));
                                         }}
                                         className="w-full pl-10 pr-4 py-3 rounded-xl text-sm text-foreground placeholder:text-muted-foreground/70 bg-secondary/50 border border-white/15 focus:border-[rgba(194,60,58,0.5)] focus:outline-none focus:shadow-[0_0_0_3px_rgba(194,60,58,0.12)] transition-all resize-none"
                                     />

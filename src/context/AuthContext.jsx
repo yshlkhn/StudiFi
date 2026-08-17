@@ -9,45 +9,103 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Get current session when app starts
-    const getInitialSession = async () => {
-      const { data, error } = await supabase.auth.getSession();
+    let mounted = true;
 
-      if (error) {
-        console.error("Error getting session:", error.message);
+
+    const initAuth = async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+
+        // No session found
+        if (!session) {
+          if (mounted) {
+            setSession(null);
+            setUser(null);
+            setLoading(false);
+          }
+          return;
+        }
+
+
+        // Verify user still exists in Supabase
+        const {
+          data: { user },
+          error,
+        } = await supabase.auth.getUser();
+
+
+        // User deleted or session invalid
+        if (error || !user) {
+          await supabase.auth.signOut();
+
+          if (mounted) {
+            setSession(null);
+            setUser(null);
+            setLoading(false);
+          }
+
+          return;
+        }
+
+
+        // Valid session
+        if (mounted) {
+          setSession(session);
+          setUser(user);
+          setLoading(false);
+        }
+
+
+      } catch (error) {
+        console.error("Auth initialization error:", error.message);
+
+        if (mounted) {
+          setSession(null);
+          setUser(null);
+          setLoading(false);
+        }
       }
-
-      setSession(data.session);
-      setUser(data.session?.user ?? null);
-      setLoading(false);
     };
 
-    getInitialSession();
+    initAuth();
 
-    // Listen for login/logout/session refresh
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
+    } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+
+        if (!mounted) return;
+
+
+        setSession(session);
+        setUser(session?.user ?? null);
+        setLoading(false);
+
+      }
+    );
+
 
     return () => {
+      mounted = false;
       subscription.unsubscribe();
     };
   }, []);
 
-  const value = {
-    user,
-    session,
-    loading,
-    isAuthenticated: !!user,
-  };
+
 
   return (
-    <AuthContext.Provider value={value}>
-      {!loading && children}
+    <AuthContext.Provider
+      value={{
+        user,
+        session,
+        loading,
+        isAuthenticated: !!user,
+      }}
+    >
+      {children}
     </AuthContext.Provider>
   );
 }
