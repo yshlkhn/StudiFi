@@ -20,7 +20,6 @@ import Dashboard from "./pages/dashboard/Dashboard";
 import MyFolders from "./pages/dashboard/MyFolders";
 import FolderDetails from "./pages/dashboard/FolderDetails";
 import FileViewer from "./pages/dashboard/FileViewer";
-import AiChat from "./pages/dashboard/AiChat";
 import Quizes from "./pages/dashboard/Quizes";
 import Analytics from "./pages/dashboard/Analytics";
 import Settings from "./pages/dashboard/Settings";
@@ -47,7 +46,6 @@ function App() {
             <Route path="/myfolders" element={<MyFolders />} />
             <Route path="/myfolders/:id" element={<FolderDetails />} />
             <Route path="/myfolders/file/:fileId" element={<FileViewer />} />
-            <Route path="/ai-chat" element={<AiChat />} />
             <Route path="/quizes" element={<Quizes />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/settings" element={<Settings />} />
