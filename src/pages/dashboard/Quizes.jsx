@@ -1,116 +1,245 @@
-import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabaseClient';
-import { generateQuizFromText } from '../../services/aiService';
+import { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabaseClient";
+import { generateQuizFromText } from "@/services/aiService";
+import { Brain, CheckCircle2, XCircle, RotateCcw, Loader2, Sparkles, AlertCircle, FileText } from "lucide-react";
 
 export default function Quizes() {
   const [folders, setFolders] = useState([]);
-  const [selectedFolder, setSelectedFolder] = useState('');
+  const [selectedFolder, setSelectedFolder] = useState("");
+  const [folderFiles, setFolderFiles] = useState([]);
   const [quiz, setQuiz] = useState([]);
   const [answers, setAnswers] = useState({});
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [fetchingFiles, setFetchingFiles] = useState(false);
+  const [statusText, setStatusText] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
     async function loadFolders() {
-      const { data } = await supabase.from('folders').select('id, name');
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data } = await supabase
+        .from("folders")
+        .select("id, name")
+        .eq("user_id", user.id)
+        .order("name", { ascending: true });
+
       if (data) setFolders(data);
     }
     loadFolders();
   }, []);
 
- // handleGenerate function ko update karein:
-const handleGenerate = async () => {
-  if (!selectedFolder) return;
-  setLoading(true);
-  setQuiz([]);
-  setAnswers({});
-  setSubmitted(false);
+  useEffect(() => {
+    async function fetchFilesForFolder() {
+      if (!selectedFolder) {
+        setFolderFiles([]);
+        return;
+      }
+      setFetchingFiles(true);
+      setErrorMsg("");
 
-  try {
-    // 1. Fetch files safely (sirf exist hone wale columns mangwaye)
-    const { data: files, error: filesErr } = await supabase
-      .from('files')
-      .select('*')
-      .eq('folder_id', selectedFolder);
+      const { data, error } = await supabase
+        .from("files")
+        .select("*")
+        .eq("folder_id", selectedFolder);
 
-    if (filesErr) throw filesErr;
-
-    // Text extract karein ya fallback description use karein
-    let fullText = files
-      ?.map(f => f.extracted_text || f.content || f.file_name || '')
-      .filter(Boolean)
-      .join('\n\n');
-
-    if (!fullText || fullText.trim().length === 0) {
-      const selectedFolderName = folders.find(f => f.id === selectedFolder)?.name || 'General Subject';
-      fullText = `Subject: ${selectedFolderName}. Key topics and foundational concepts for revision and exam prep.`;
+      if (error) {
+        console.error("Error loading files:", error);
+      } else {
+        setFolderFiles(data || []);
+      }
+      setFetchingFiles(false);
     }
 
-    // 2. Grok Call
-    const generated = await generateQuizFromText(fullText, 'Exam Preparation', 5);
-    setQuiz(generated);
-  } catch (err) {
-    console.error('Quiz Generation Error:', err);
-    alert(err.message || 'Error generating quiz. Please verify API credentials.');
-  } finally {
-    setLoading(false);
-  }
-};
+    fetchFilesForFolder();
+  }, [selectedFolder]);
+
+  const readDocumentContent = async (fileRecord) => {
+    if (fileRecord.extracted_text && fileRecord.extracted_text.trim().length > 50) {
+      return fileRecord.extracted_text;
+    }
+
+    try {
+      const bucket = fileRecord.bucket || "documents";
+      const filePath = fileRecord.file_path || fileRecord.storage_path;
+
+      if (filePath) {
+        const { data: blob, error } = await supabase.storage.from(bucket).download(filePath);
+        if (!error && blob) {
+          const rawText = await blob.text();
+          const cleanText = rawText
+            .replace(/[^\x20-\x7E\t\n\r]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+          if (cleanText.length > 50) {
+            supabase
+              .from("files")
+              .update({ extracted_text: cleanText.slice(0, 15000) })
+              .eq("id", fileRecord.id)
+              .then();
+            return cleanText.slice(0, 8000);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Storage extract fallback:", e);
+    }
+
+    return `Document: ${fileRecord.file_name}`;
+  };
+
+  const handleGenerate = async () => {
+    if (!selectedFolder) return;
+    setErrorMsg("");
+
+    if (folderFiles.length === 0) {
+      setErrorMsg("Is folder me koi file mojood nahi hai. Pehle 'My Folders' me ja kar documents upload karein.");
+      return;
+    }
+
+    setLoading(true);
+    setQuiz([]);
+    setAnswers({});
+    setSubmitted(false);
+    setStatusText("Reading uploaded documents from storage...");
+
+    try {
+      const selectedFolderName = folders.find((f) => f.id === selectedFolder)?.name || "Academic Subject";
+
+      const textList = await Promise.all(folderFiles.map((f) => readDocumentContent(f)));
+      const combinedText = textList.filter(Boolean).join("\n\n---\n\n");
+
+      setStatusText("Generating conceptual quiz questions with AI...");
+      const generated = await generateQuizFromText(combinedText, selectedFolderName, 5);
+
+      if (!generated || !Array.isArray(generated) || generated.length === 0) {
+        throw new Error("Could not extract enough concepts from the files.");
+      }
+
+      setQuiz(generated);
+      setStatusText("");
+    } catch (err) {
+      console.error("Quiz Error:", err);
+      setErrorMsg(err.message || "Failed to generate quiz from document content.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSelectOption = (qIdx, optIdx) => {
     if (submitted) return;
-    setAnswers(prev => ({ ...prev, [qIdx]: optIdx }));
+    setAnswers((prev) => ({ ...prev, [qIdx]: optIdx }));
   };
 
   const handleSubmitQuiz = async () => {
-    let score = 0;
+    if (Object.keys(answers).length === 0) return;
+
+    let calculatedScore = 0;
     quiz.forEach((q, i) => {
-      if (answers[i] === q.correctAnswer) score += 1;
+      if (answers[i] === q.correctAnswer) calculatedScore += 1;
     });
 
     setSubmitted(true);
 
-    // Save result to Supabase for Analytics tracking
-    const { data: userData } = await supabase.auth.getUser();
-    if (userData?.user) {
-      await supabase.from('quiz_attempts').insert({
-        user_id: userData.user.id,
-        folder_id: selectedFolder,
-        score,
-        total_questions: quiz.length,
-        created_at: new Date().toISOString(),
-      });
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from("quiz_attempts").insert({
+          user_id: user.id,
+          folder_id: selectedFolder,
+          score: calculatedScore,
+          total_questions: quiz.length,
+        });
+      }
+    } catch (dbErr) {
+      console.error("Error logging attempt:", dbErr);
     }
   };
 
-  return (
-    <div className="p-6 text-white max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold mb-4">Dynamic Quiz Generator</h1>
+  const scoreCount = Object.keys(answers).filter((k) => answers[k] === quiz[k]?.correctAnswer).length;
 
-      <div className="flex gap-4 mb-6">
-        <select
-          value={selectedFolder}
-          onChange={(e) => setSelectedFolder(e.target.value)}
-          className="bg-gray-800 border border-gray-700 rounded-lg p-2 flex-1"
-        >
-          <option value="">Select Folder Material</option>
-          {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-        </select>
-        <button
-          onClick={handleGenerate}
-          disabled={!selectedFolder || loading}
-          className="bg-purple-600 hover:bg-purple-700 px-6 py-2 rounded-lg font-semibold disabled:opacity-50"
-        >
-          {loading ? 'Generating with Grok...' : 'Generate Quiz'}
-        </button>
+  return (
+    <div className="p-6 md:p-10 max-w-4xl mx-auto text-white space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+          <Brain className="w-7 h-7 text-brand-secondary" /> Dynamic Document Quiz
+        </h1>
+        <p className="text-sm text-white/50 mt-1">
+          Select a subject folder to read uploaded notes and generate technical MCQs[cite: 3].
+        </p>
       </div>
 
+      <div className="bg-[#0f1e35] p-5 rounded-2xl border border-white/10 space-y-4">
+        <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
+          <select
+            value={selectedFolder}
+            onChange={(e) => {
+              setSelectedFolder(e.target.value);
+              setQuiz([]);
+              setSubmitted(false);
+            }}
+            className="w-full sm:flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-brand-secondary transition"
+          >
+            <option value="" className="bg-[#0f1e35] text-white/60">-- Select a Subject Folder --</option>
+            {folders.map((f) => (
+              <option key={f.id} value={f.id} className="bg-[#0f1e35] text-white">
+                {f.name}
+              </option>
+            ))}
+          </select>
+
+          <button
+            onClick={handleGenerate}
+            disabled={!selectedFolder || loading || fetchingFiles}
+            className="w-full sm:w-auto bg-brand-secondary text-brand-primary font-bold px-6 py-3 rounded-xl hover:bg-amber-400 disabled:opacity-50 transition flex items-center justify-center gap-2 shadow-lg"
+          >
+            {loading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" /> {statusText || "Processing..."}
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4" /> Generate Quiz From Files
+              </>
+            )}
+          </button>
+        </div>
+
+        {selectedFolder && (
+          <div className="pt-2 border-t border-white/5 flex items-center justify-between text-xs text-white/50">
+            <span className="flex items-center gap-1.5">
+              <FileText className="w-3.5 h-3.5 text-brand-secondary" />
+              Source Material: {fetchingFiles ? "Loading files..." : `${folderFiles.length} files attached`}
+            </span>
+            {folderFiles.length > 0 && (
+              <span className="text-emerald-400 font-medium">Ready to extract</span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {errorMsg && (
+        <div className="p-4 rounded-xl bg-red-950/40 border border-red-500/50 flex items-center gap-3 text-red-300 text-sm">
+          <AlertCircle className="w-5 h-5 shrink-0 text-red-400" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
+
       {quiz.length > 0 && (
-        <div className="space-y-6">
+        <div className="space-y-6 pt-2">
           {quiz.map((q, qIdx) => (
-            <div key={qIdx} className="bg-gray-800/80 p-5 rounded-xl border border-gray-700">
-              <p className="font-medium text-base mb-3">{qIdx + 1}. {q.question}</p>
-              <div className="space-y-2">
+            <div
+              key={q.id || qIdx}
+              className="bg-[#0f1e35] p-6 rounded-2xl border border-white/10 shadow-lg space-y-4"
+            >
+              <p className="font-semibold text-base text-white/90">
+                {qIdx + 1}. {q.question}
+              </p>
+
+              <div className="space-y-2.5">
                 {q.options.map((opt, optIdx) => {
                   const isSelected = answers[qIdx] === optIdx;
                   const isCorrect = submitted && optIdx === q.correctAnswer;
@@ -120,34 +249,52 @@ const handleGenerate = async () => {
                     <button
                       key={optIdx}
                       onClick={() => handleSelectOption(qIdx, optIdx)}
-                      className={`w-full text-left p-3 rounded-lg border text-sm transition-all ${
+                      className={`w-full text-left p-3.5 rounded-xl border text-sm font-medium transition-all flex items-center justify-between ${
                         isCorrect
-                          ? 'bg-green-600/30 border-green-500 text-green-200'
+                          ? "bg-emerald-950/60 border-emerald-500 text-emerald-200"
                           : isWrong
-                          ? 'bg-red-600/30 border-red-500 text-red-200'
+                          ? "bg-rose-950/60 border-rose-500 text-rose-200"
                           : isSelected
-                          ? 'bg-blue-600/30 border-blue-500'
-                          : 'bg-gray-700/50 border-gray-600 hover:bg-gray-700'
+                          ? "bg-brand-secondary/20 border-brand-secondary text-white"
+                          : "bg-white/5 border-white/5 hover:bg-white/10 text-white/80"
                       }`}
                     >
-                      {opt}
+                      <span>{opt}</span>
+                      {isCorrect && <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 ml-2" />}
+                      {isWrong && <XCircle className="w-4 h-4 text-rose-400 shrink-0 ml-2" />}
                     </button>
                   );
                 })}
               </div>
+
+              {submitted && q.explanation && (
+                <div className="mt-3 p-3 rounded-lg bg-black/40 border border-white/5 text-xs text-white/70">
+                  <span className="font-semibold text-brand-secondary">Concept Explanation:</span> {q.explanation}
+                </div>
+              )}
             </div>
           ))}
 
           {!submitted ? (
             <button
               onClick={handleSubmitQuiz}
-              className="w-full bg-green-600 hover:bg-green-700 py-3 rounded-lg font-bold"
+              disabled={Object.keys(answers).length === 0}
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl transition shadow-lg disabled:opacity-50"
             >
-              Submit Quiz & Record Analytics
+              Submit Quiz Answers
             </button>
           ) : (
-            <div className="p-4 bg-gray-800 rounded-lg text-center font-bold text-lg text-green-400">
-              Quiz Completed! Score: {Object.keys(answers).filter(k => answers[k] === quiz[k].correctAnswer).length} / {quiz.length}
+            <div className="bg-[#0f1e35] border border-brand-secondary/30 rounded-2xl p-6 text-center space-y-3">
+              <h3 className="text-xl font-bold text-brand-secondary">
+                Quiz Score: {scoreCount} / {quiz.length} ({Math.round((scoreCount / quiz.length) * 100)}%)
+              </h3>
+              <p className="text-xs text-white/50">Performance updated in Analytics[cite: 3].</p>
+              <button
+                onClick={handleGenerate}
+                className="inline-flex items-center gap-2 text-xs bg-white/10 hover:bg-white/20 px-4 py-2.5 rounded-xl font-semibold transition"
+              >
+                <RotateCcw className="w-4 h-4" /> Re-generate Questions
+              </button>
             </div>
           )}
         </div>

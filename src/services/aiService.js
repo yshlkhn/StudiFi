@@ -1,72 +1,81 @@
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-export async function askGrok(messages, systemPrompt = 'You are StudiFi AI Assistant.') {
-  const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY;
+export async function askGrok(messages, systemPrompt = "You are StudiFi AI Assistant.") {
+  const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY || import.meta.env.VITE_XAI_API_KEY;
 
-  if (!apiKey || apiKey.includes('your_')) {
-    throw new Error('VITE_OPENROUTER_API_KEY is missing in .env file.');
+  if (!apiKey || apiKey.includes("your_")) {
+    throw new Error("VITE_OPENROUTER_API_KEY is missing in .env file.");
   }
 
   const formattedMessages = [
-    { role: 'system', content: String(systemPrompt || '') },
+    { role: "system", content: String(systemPrompt || "") },
     ...messages.map((m) => ({
-      role: m.role || 'user',
-      content: String(m.content || ''),
+      role: m.role || "user",
+      content: String(m.content || ""),
     })),
   ];
 
   const res = await fetch(OPENROUTER_URL, {
-    method: 'POST',
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey.trim()}`,
-      'HTTP-Referer': 'http://localhost:5173',
-      'X-Title': 'StudiFi',
+      "HTTP-Referer": "http://localhost:5173",
+      "X-Title": "StudiFi",
     },
     body: JSON.stringify({
-      // Auto-routes across all available 100% free models
-      model: 'openrouter/free',
+      model: "openrouter/free",
       messages: formattedMessages,
-      temperature: 0.3,
+      temperature: 0.2,
     }),
   });
 
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));
-    throw new Error(errData?.error?.message || `API Error: HTTP ${res.status}`);
+    throw new Error(errData?.error?.message || `AI API Error: HTTP ${res.status}`);
   }
 
   const data = await res.json();
-  return data.choices?.[0]?.message?.content || 'No response generated.';
+  return data.choices?.[0]?.message?.content || "";
 }
 
-export async function generateQuizFromText(textContent, topic = 'General', count = 5) {
-  const systemPrompt =
-    'You are a strict JSON quiz generator. Output ONLY a valid JSON array of questions without backticks, markdown, or commentary.';
+function safeParseJSON(rawStr) {
+  if (!rawStr) return null;
 
-  const prompt = `Generate exactly ${count} multiple choice questions.
-Topic: ${topic}
-Study Material:
-${textContent ? textContent.slice(0, 5000) : 'Standard Computer Science & Academic concepts'}
+  const match = rawStr.match(/\[\s*\{[\s\S]*\}\s*\]/);
+  let clean = match ? match[0] : rawStr.replace(/```json/gi, "").replace(/```/g, "").trim();
 
-Return in this exact schema:
-[
-  {
-    "id": 1,
-    "question": "Question text?",
-    "options": ["Option A", "Option B", "Option C", "Option D"],
-    "correctAnswer": 0,
-    "explanation": "Brief explanation"
+  // Strip illegal ASCII control characters
+  clean = clean.replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F]/g, "");
+
+  try {
+    return JSON.parse(clean);
+  } catch {
+    const fixedNewlines = clean.replace(/(?<!\\)\n/g, "\\n").replace(/\r/g, "");
+    return JSON.parse(fixedNewlines);
   }
-]`;
+}
 
-  const raw = await askGrok([{ role: 'user', content: prompt }], systemPrompt);
+export async function generateQuizFromText(textContent, subjectName, count = 5) {
+  const systemPrompt = `You are a university examination professor for "${subjectName}".
+STRICT RULES:
+1. Generate deep, conceptual multiple choice questions based on the technical content, definitions, laws, and principles in the text.
+2. NEVER ask meta questions (e.g., "What is the subject?", "What type of questions should be prepared?").
+3. Output STRICTLY a valid JSON array of objects. No markdown ticks, no preamble.
 
-  if (!raw) throw new Error('Empty response from AI engine.');
+Schema:
+[{"id": 1, "question": "Technical question text?", "options": ["Option A", "Option B", "Option C", "Option D"], "correctAnswer": 0, "explanation": "Brief reasoning"}]`;
 
-  // Extract JSON cleanly
-  const jsonMatch = raw.match(/\[\s*\{[\s\S]*\}\s*\]/);
-  const targetStr = jsonMatch ? jsonMatch[0] : raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+  const prompt = `Subject: ${subjectName}
+Study Notes Content:
+"""
+${textContent.slice(0, 8000)}
+"""
 
-  return JSON.parse(targetStr);
+Generate ${count} academic MCQs strictly from the material above:`;
+
+  const raw = await askGrok([{ role: "user", content: prompt }], systemPrompt);
+  if (!raw) throw new Error("Empty response received from AI engine.");
+
+  return safeParseJSON(raw);
 }
