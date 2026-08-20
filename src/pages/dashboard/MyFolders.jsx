@@ -121,51 +121,58 @@ export default function MyFolders() {
 
   // Direct Supabase Storage Upload (Bypasses failing Edge Function)[cite: 1]
  const uploadFiles = async (folderId) => {
-  setUploadingFolderId(folderId);
+    setUploadingFolderId(folderId);
 
-  const filesArray = Array.from(folderFiles[folderId] || []);
+    const filesArray = Array.from(folderFiles[folderId] || []);
 
-  if (!filesArray.length) {
-    setMessage({ type: "error", text: "No files selected" });
-    setUploadingFolderId(null);
-    return;
-  }
-
-  let hasError = false;
-
-  for (const file of filesArray) {
-    if (file.size > 25 * 1024 * 1024) {
-      setMessage({ type: "error", text: `${file.name} exceeds 25MB limit` });
-      hasError = true;
-      continue;
+    if (!filesArray.length) {
+      setMessage({
+        type: "error",
+        text: "No files selected",
+      });
+      setUploadingFolderId(null);
+      return;
     }
 
-    try {
-      const cleanName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const uniqueId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now();
-      const storagePath = `${user.id}/${folderId}/${uniqueId}_${cleanName}`;
+    let hasError = false;
 
-      // 1. Upload to Supabase Storage Bucket
-      const { error: storageError } = await supabase.storage
-        .from(BUCKET_NAME)
-        .upload(storagePath, file, {
-          contentType: file.type || "application/octet-stream",
-          upsert: true,
+    for (const file of filesArray) {
+      if (file.size > 25 * 1024 * 1024) {
+        setMessage({
+          type: "error",
+          text: `${file.name} exceeds 25MB limit`,
         });
-
-      if (storageError) {
-        throw new Error(storageError.message);
+        hasError = true;
+        continue;
       }
 
-      // 2. Get Public URL
-      const { data: pubData } = supabase.storage
-        .from(BUCKET_NAME)
-        .getPublicUrl(storagePath);
+      try {
+        const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const uniqueId =
+          typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : Date.now();
+        const storagePath = `${user.id}/${folderId}/${uniqueId}_${sanitizedName}`;
 
-      // 3. Database row insert
-      const { error: dbError } = await supabase
-        .from("files")
-        .insert([
+        // 1. Upload to Supabase Storage
+        const { error: storageError } = await supabase.storage
+          .from(BUCKET_NAME)
+          .upload(storagePath, file, {
+            contentType: file.type || "application/pdf",
+            upsert: true,
+          });
+
+        if (storageError) {
+          throw new Error(storageError.message);
+        }
+
+        // 2. Get Public URL
+        const { data: pubData } = supabase.storage
+          .from(BUCKET_NAME)
+          .getPublicUrl(storagePath);
+
+        // 3. Database Insert Payload
+        const { error: dbError } = await supabase.from("files").insert([
           {
             user_id: user.id,
             folder_id: folderId,
@@ -174,45 +181,45 @@ export default function MyFolders() {
             file_path: storagePath,
             storage_path: storagePath,
             file_size: file.size || 0,
-            mime_type: file.type || "application/octet-stream",
+            mime_type: file.type || "application/pdf",
             url: pubData?.publicUrl || "",
             created_at: new Date().toISOString(),
           },
         ]);
 
-      if (dbError) {
-        throw new Error(dbError.message);
+        if (dbError) {
+          throw new Error(dbError.message);
+        }
+      } catch (err) {
+        console.error(`Upload error for ${file.name}:`, err);
+        setMessage({
+          type: "error",
+          text: `Failed to upload ${file.name}: ${err.message}`,
+        });
+        hasError = true;
       }
-    } catch (err) {
-      console.error(`Upload error for ${file.name}:`, err);
-      setMessage({
-        type: "error",
-        text: `Failed to upload ${file.name}: ${err.message}`,
-      });
-      hasError = true;
     }
-  }
 
-  if (!hasError) {
-    setMessage({
-      type: "success",
-      text: "Files uploaded successfully!",
-    });
-    queryClient.invalidateQueries({
-      queryKey: ["recentFolders", user.id],
-    });
-  }
+    if (!hasError) {
+      setMessage({
+        type: "success",
+        text: "Files uploaded directly to Supabase successfully!",
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["recentFolders", user.id],
+      });
+    }
 
-  setFolderFiles((prev) => ({
-    ...prev,
-    [folderId]: [],
-  }));
+    setFolderFiles((prev) => ({
+      ...prev,
+      [folderId]: [],
+    }));
 
-  const input = document.getElementById(`file-${folderId}`);
-  if (input) input.value = "";
+    const input = document.getElementById(`file-${folderId}`);
+    if (input) input.value = "";
 
-  setUploadingFolderId(null);
-};
+    setUploadingFolderId(null);
+  };
 
   return (
     <div className="relative min-h-full bg-brand-primary">
