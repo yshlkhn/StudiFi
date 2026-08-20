@@ -3,27 +3,32 @@ import { ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import "@/styles/toast.css";
 
+
 import Login from "./pages/auth/Login";
 import Signup from "./pages/auth/Signup";
-import TermsOfService from "./components/Layout/TermsOfServices";
-import PrivacyPolicy from "./components/Layout/PrivacyPolicy";
-import ForgotPassword from "./components/Layout/ForgotPassword";
-import UpdatePassword from "./components/Layout/UpdatePassword";
+import ForgotPassword from "./pages/auth/ForgotPassword";
+import UpdatePassword from "./pages/auth/UpdatePassword";
+
+import TermsOfService from "./components/legal/TermsOfServices";
+import PrivacyPolicy from "./components/legal/PrivacyPolicy";
+
 import NotFound from "./pages/NotFound";
+import HomeRedirect from "./pages/HomeRedirect";
 
 import ProtectedRoute from "./Routes/ProtectedRoute";
 import PublicRoute from "./Routes/PublicRoute";
 
-import DashboardLayout from "./pages/DashboardLayout";
+import DashboardLayout from "./layouts/DashboardLayout";
 
 import Dashboard from "./pages/dashboard/Dashboard";
-import MyFolders from "./pages/dashboard/MyFolders";
-import FolderDetails from "./pages/dashboard/FolderDetails";
-import FileViewer from "./pages/dashboard/FileViewer";
+
+import MyFolders from "./pages/dashboard/my-folders/MyFolders";
+import FolderDetails from "./pages/dashboard/my-folders/FolderDetails";
+import FileViewer from "./pages/dashboard/my-folders/FileViewer";
+
 import Quizes from "./pages/dashboard/Quizes";
 import Analytics from "./pages/dashboard/Analytics";
 import Settings from "./pages/dashboard/Settings";
-import HomeRedirect from "./pages/HomeRedirect";
 
 function App() {
   return (

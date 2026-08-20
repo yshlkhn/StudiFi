@@ -18,7 +18,6 @@ export default function Sidebar() {
     const NAV_ITEMS = [
         { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
         { id: "folders", label: "My Folders", icon: FolderOpen, href: "/myfolders" },
-        { id: "chat", label: "AI Chat", icon: MessageSquare, href: "/ai-chat" },
         { id: "quizzes", label: "Quizzes", icon: Brain, href: "/quizes" },
         { id: "analytics", label: "Analytics", icon: BarChart3, href: "/analytics" },
         { id: "settings", label: "Settings", icon: Settings, href: "/settings" },
@@ -28,7 +27,7 @@ export default function Sidebar() {
         let mounted = true;
 
         const loadUser = async () => {
-            
+
             const { data, error } = await supabase.auth.getSession();
 
             if (!mounted) return;

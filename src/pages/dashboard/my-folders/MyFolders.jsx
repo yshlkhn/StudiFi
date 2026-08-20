@@ -153,15 +153,20 @@ export default function MyFolders() {
     const uploadFiles = async (folderId) => {
         setUploadingFolderId(folderId);
 
-        const filesArray = Array.from(folderFiles[folderId] || []);
+        const filesArray = Array.from(
+            folderFiles[folderId] || []
+        );
 
         if (!filesArray.length) {
-            setMessage({ type: "error", text: "No files selected" });
+            setMessage({
+                type: "error",
+                text: "No files selected",
+            });
+
             setUploadingFolderId(null);
             return;
         }
 
-        // ✅ Allowed document types
         const allowedTypes = [
             "application/pdf",
             "application/msword",
@@ -172,71 +177,99 @@ export default function MyFolders() {
 
         let hasError = false;
 
-        for (let file of filesArray) {
+        for (const file of filesArray) {
 
             if (!allowedTypes.includes(file.type)) {
                 setMessage({
                     type: "error",
                     text: `"${file.name}" is not supported. Please upload PDF, DOC, DOCX, PPT, or PPTX files only.`,
                 });
+
                 hasError = true;
                 continue;
             }
 
-            if (file.size > 10 * 1024 * 1024) {
+            if (
+                file.size >
+                10 * 1024 * 1024
+            ) {
                 setMessage({
                     type: "error",
                     text: `${file.name} exceeds 10MB limit`,
                 });
+
                 hasError = true;
                 continue;
             }
 
-            const safeName = file.name.replace(/[^\w.-]/g, "_");
-            const uniqueName = `${Date.now()}-${Math.random().toString(36).substring(2)}-${safeName}`;
-            const filePath = `${user.id}/${folderId}/${uniqueName}`;
+            try {
+                const formData = new FormData();
+                formData.append("file", file);
 
-            const { error: uploadError } = await supabase.storage
-                .from("study-files")
-                .upload(filePath, file);
+                formData.append(
+                    "folderId",
+                    folderId
+                );
 
-            if (uploadError) {
-                setMessage({ type: "error", text: uploadError.message });
-                hasError = true;
-                continue;
-            }
+                const { data, error, } = await supabase.functions.invoke(
+                    "convert-upload",
+                    {
+                        body:
+                            formData,
+                    }
+                );
 
-            const { error: dbError } = await supabase.from("files").insert({
-                folder_id: folderId,
-                user_id: user.id,
-                name: file.name,
-                file_path: filePath,
-                file_type: file.type,
-            });
+                if (error) {
+                    console.error("Edge Function error:", error);
 
-            if (dbError) {
-                setMessage({ type: "error", text: dbError.message });
+                    throw new Error(error.message || "Upload failed");
+                }
+
+                if (!data?.success) {
+                    throw new Error(data?.error || "Upload failed");
+                }
+
+                console.log("Uploaded:", data);
+
+            } catch (error) {
+
+                console.error(`Failed to upload ${file.name}:`, error);
+
+                setMessage({
+                    type: "error", text:
+                        error.message || `Failed to upload ${file.name}`,
+                });
+
                 hasError = true;
             }
         }
-
-        // ✅ Success only if no errors
         if (!hasError) {
-            setMessage({ type: "success", text: "Files uploaded successfully!" });
+            setMessage({
+                type: "success",
+                text: "Files uploaded and converted to PDF successfully!",
+            });
+
             queryClient.invalidateQueries({
-                queryKey: ["recentFolders", user.id],
+                queryKey: [
+                    "recentFolders",
+                    user.id,
+                ],
             });
         }
 
-        // ✅ Reset selected files
         setFolderFiles((prev) => ({
             ...prev,
             [folderId]: [],
         }));
 
-        // ✅ Reset input field
-        const input = document.getElementById(`file-${folderId}`);
-        if (input) input.value = "";
+        const input =
+            document.getElementById(
+                `file-${folderId}`
+            );
+
+        if (input) {
+            input.value = "";
+        }
 
         setUploadingFolderId(null);
     };
