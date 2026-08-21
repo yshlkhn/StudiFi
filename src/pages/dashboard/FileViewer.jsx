@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "@/lib/supabaseClient";
-import { askGrok } from "@/services/aiService";
+import { useAuth } from "@/context/AuthContext";
+import { askGrok, retrieveRelevantChunks } from "@/services/aiService";
 import {
   ArrowLeft,
   Download,
@@ -11,11 +13,19 @@ import {
   ExternalLink,
   Sparkles,
   CheckCircle2,
+  XCircle,
   BookOpen,
   Send,
+  Brain,
+  X,
+  RotateCcw,
+  HelpCircle,
+  Bot,
+  Trash2,
+  AlertTriangle,
 } from "lucide-react";
 
-// Client-side PDF Real Text Extractor using PDF.js
+// Client-side PDF Text Extractor
 async function extractTextFromPdfBlob(blob) {
   if (!window.pdfjsLib) {
     await new Promise((resolve, reject) => {
@@ -33,25 +43,26 @@ async function extractTextFromPdfBlob(blob) {
 
   const arrayBuffer = await blob.arrayBuffer();
   const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  let extractedText = "";
+  let extracted = "";
 
-  // Extract up to 25 pages of text
-  const maxPages = Math.min(pdf.numPages, 25);
+  const maxPages = Math.min(pdf.numPages, 30);
   for (let i = 1; i <= maxPages; i++) {
     const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    const strings = content.items.map((item) => item.str).join(" ");
-    if (strings.trim()) {
-      extractedText += `\n[Page ${i}]\n${strings}\n`;
+    const textContent = await page.getTextContent();
+    const str = textContent.items.map((item) => item.str).join(" ");
+    if (str.trim()) {
+      extracted += `\n[Page ${i}]\n${str}\n`;
     }
   }
 
-  return extractedText.trim();
+  return extracted.trim();
 }
 
 export default function FileViewer() {
   const { fileId } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const chatBottomRef = useRef(null);
 
   const [file, setFile] = useState(null);
   const [blobUrl, setBlobUrl] = useState("");
@@ -60,82 +71,122 @@ export default function FileViewer() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const [question, setQuestion] = useState("");
-  const [aiAnswer, setAiAnswer] = useState("");
+  // Persistent RAG Chat State
+  const [chatMessages, setChatMessages] = useState([]);
+  const [inputQuestion, setInputQuestion] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
+  const [showClearModal, setShowClearModal] = useState(false);
+  const [clearingChat, setClearingChat] = useState(false);
+  const [toastMessage, setToastMessage] = useState(null);
+
+  // Single File Quiz State
+  const [showQuizModal, setShowQuizModal] = useState(false);
+  const [quizLoading, setQuizLoading] = useState(false);
+  const [quizQuestions, setQuizQuestions] = useState([]);
+  const [userAnswers, setUserAnswers] = useState({});
+  const [quizSubmitted, setQuizSubmitted] = useState(false);
+  const [savingScore, setSavingScore] = useState(false);
 
   useEffect(() => {
-    let activeObjectUrl = null;
+    if (toastMessage) {
+      const t = setTimeout(() => setToastMessage(null), 3000);
+      return () => clearTimeout(t);
+    }
+  }, [toastMessage]);
 
-    async function loadDocumentFromSupabase() {
+  // Load Document & Saved File Chat History
+  useEffect(() => {
+    let activeUrl = null;
+
+    async function loadDocumentAndChat() {
       try {
         setLoading(true);
         setError("");
-        setBlobUrl("");
-        setPublicUrl("");
 
-        // 1. Fetch file record from database
-        const { data: fileData, error: dbError } = await supabase
+        // 1. Fetch File Record
+        const { data: fileData, error: dbErr } = await supabase
           .from("files")
           .select("*")
           .eq("id", fileId)
           .single();
 
-        if (dbError || !fileData) {
-          throw new Error("Database record not found.");
+        if (dbErr || !fileData) {
+          throw new Error("Document record not found.");
         }
 
         setFile(fileData);
 
-        const bucket = fileData.bucket || "documents";
-        const storagePath = fileData.file_path || fileData.storage_path;
+        // 2. Fetch Persistent Chat for THIS specific file
+        if (user?.id) {
+          const { data: savedChats } = await supabase
+            .from("chat_messages")
+            .select("role, content")
+            .eq("user_id", user.id)
+            .eq("file_id", fileId)
+            .order("created_at", { ascending: true });
 
-        if (!storagePath) {
-          throw new Error("File path is missing.");
+          if (savedChats && savedChats.length > 0) {
+            setChatMessages(savedChats);
+          } else {
+            setChatMessages([]);
+          }
         }
 
-        // 2. Generate Supabase Public URL
+        // 3. Storage Retrieval
+        const bucketsToTry = [fileData.bucket, "documents", "study-files"].filter(Boolean);
+        const storagePath = fileData.file_path || fileData.storage_path;
+
+        let foundBlob = null;
+        let activeBucket = "documents";
+
+        for (const b of bucketsToTry) {
+          try {
+            const { data: bData, error: bErr } = await supabase.storage
+              .from(b)
+              .download(storagePath);
+            if (!bErr && bData && bData.size > 0 && bData.type !== "application/json") {
+              foundBlob = bData;
+              activeBucket = b;
+              break;
+            }
+          } catch {
+            // try next
+          }
+        }
+
         const { data: pubData } = supabase.storage
-          .from(bucket)
+          .from(activeBucket)
           .getPublicUrl(storagePath);
+        const directUrl = fileData.url || pubData?.publicUrl || "";
+        setPublicUrl(directUrl);
 
-        const liveUrl = fileData.url || pubData?.publicUrl || "";
-        setPublicUrl(liveUrl);
-
-        // 3. Fetch storage blob
-        const { data: blob, error: dlErr } = await supabase.storage
-          .from(bucket)
-          .download(storagePath);
-
-        if (!dlErr && blob && blob.size > 0) {
+        if (foundBlob) {
           const isPdfFile = (fileData.file_name || "").toLowerCase().endsWith(".pdf");
-          const mimeType = isPdfFile ? "application/pdf" : blob.type || "application/octet-stream";
+          const mimeType = isPdfFile ? "application/pdf" : foundBlob.type || "application/octet-stream";
 
-          activeObjectUrl = URL.createObjectURL(new Blob([blob], { type: mimeType }));
-          setBlobUrl(activeObjectUrl);
+          activeUrl = URL.createObjectURL(new Blob([foundBlob], { type: mimeType }));
+          setBlobUrl(activeUrl);
 
-          // Extract text from PDF
           if (isPdfFile) {
             try {
-              const cleanText = await extractTextFromPdfBlob(blob);
-              if (cleanText && cleanText.length > 50) {
-                setDocText(cleanText);
-                // Cache extracted text in database
+              const text = await extractTextFromPdfBlob(foundBlob);
+              if (text && text.length > 50) {
+                setDocText(text);
                 supabase
                   .from("files")
-                  .update({ extracted_text: cleanText.slice(0, 20000) })
+                  .update({ extracted_text: text.slice(0, 30000) })
                   .eq("id", fileData.id)
                   .then();
               }
             } catch (err) {
-              console.warn("PDF.js text parse fallback:", err);
+              console.warn("PDF.js text parse:", err);
             }
           }
-        } else if (liveUrl) {
-          setBlobUrl(liveUrl);
+        } else if (directUrl) {
+          setBlobUrl(directUrl);
         } else {
-          throw new Error("Cannot find physical file.");
+          throw new Error("Physical storage file not found.");
         }
       } catch (err) {
         console.error("Document load error:", err);
@@ -145,104 +196,326 @@ export default function FileViewer() {
       }
     }
 
-    if (fileId) loadDocumentFromSupabase();
+    if (fileId) loadDocumentAndChat();
 
     return () => {
-      if (activeObjectUrl) URL.revokeObjectURL(activeObjectUrl);
+      if (activeUrl) URL.revokeObjectURL(activeUrl);
     };
-  }, [fileId]);
+  }, [fileId, user]);
 
-  // Instant Native Download
-  const handleDownload = () => {
-    const downloadTarget = blobUrl || publicUrl;
-    if (!downloadTarget || !file) return;
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages, aiLoading]);
 
-    const a = document.createElement("a");
-    a.href = downloadTarget;
-    a.download = file.file_name || file.name || "document";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  };
+  const displayName = file?.file_name || file?.name || "document";
+  const fileExt = displayName.split(".").pop().toLowerCase();
+  const isPdf = fileExt === "pdf";
+  const isDocx = ["docx", "doc", "dotx", "ppt", "pptx"].includes(fileExt);
 
-  // 1. One-Click Document Summary Generator
-  const handleGenerateSummary = async () => {
-    if (summaryLoading || aiLoading) return;
-
-    setSummaryLoading(true);
-    setAiAnswer("");
-
-    const displayName = file?.file_name || file?.name || "Academic Document";
-    const contextContent =
-      file?.extracted_text ||
-      docText ||
-      `Topic: ${displayName}. Digital Logic Design, Gates, Signals, ADC/DAC Conversions.`;
-
-    const systemPrompt = `You are StudiFi's University Professor. Provide a comprehensive, structured, high-yield academic summary of the provided text.
-Format with clean markdown:
-- **📌 Core Overview**: 2-3 sentences summarizing the topic.
-- **⚡ Key Concepts & Definitions**: Clear explanation of principles, technical components, and logic in the notes.
-- **📐 Important Rules, Formulas & Conversions**: Detailed breakdown of equations, conversions, and laws.
-- **🎯 Exam Highlights & Test Traps**: Crucial points to review before exams.`;
-
-    const userPrompt = `Document: ${displayName}
-Content / Extracted Notes:
-"""
-${contextContent.slice(0, 9000)}
-"""
-
-Generate the complete study summary:`;
-
-    try {
-      const response = await askGrok(
-        [{ role: "user", content: userPrompt }],
-        systemPrompt
-      );
-      setAiAnswer(response);
-    } catch (err) {
-      setAiAnswer("Error generating summary: " + (err.message || "AI service unreachable."));
-    } finally {
-      setSummaryLoading(false);
-    }
-  };
-
-  // 2. Custom AI Q&A
-  const handleAskAI = async (e) => {
+  // Send RAG Chat Message & Save to Supabase
+  const handleSendChat = async (e) => {
     e.preventDefault();
-    if (!question.trim() || aiLoading || summaryLoading) return;
+    if (!inputQuestion.trim() || aiLoading || !user?.id) return;
 
+    const userQuery = inputQuestion.trim();
+    setInputQuestion("");
+
+    const newHistory = [...chatMessages, { role: "user", content: userQuery }];
+    setChatMessages(newHistory);
     setAiLoading(true);
-    setAiAnswer("");
-
-    const displayName = file?.file_name || file?.name || "Uploaded Document";
-    const contextContent =
-      file?.extracted_text ||
-      docText ||
-      `Document: ${displayName}. Digital Logic Design notes.`;
 
     try {
-      const response = await askGrok(
-        [{ role: "user", content: question }],
-        `You are StudiFi AI Assistant. Answer questions regarding "${displayName}" based on this material:\n${contextContent.slice(0, 9000)}`
-      );
-      setAiAnswer(response);
+      // 1. Insert user message in Supabase with file_id
+      await supabase.from("chat_messages").insert([
+        {
+          user_id: user.id,
+          file_id: fileId,
+          role: "user",
+          content: userQuery,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+
+      const fullContext = file?.extracted_text || docText || `Document Title: ${displayName}`;
+      const relevantSnippets = retrieveRelevantChunks(fullContext, userQuery);
+
+      const systemPrompt = `You are StudiFi's Intelligent Document Assistant.
+You have real-time access to the user's uploaded document "${displayName}".
+
+=== RETRIEVED RELEVANT DOCUMENT CONTEXT ===
+${relevantSnippets}
+==========================================
+
+Instructions:
+1. Answer strictly using the document context above.
+2. Maintain full conversational memory and respond to follow-up questions accurately.
+3. Be direct, clear, and structured with bold highlights and bullet points.`;
+
+      const reply = await askGrok(newHistory, systemPrompt);
+
+      // 2. Insert assistant response in Supabase
+      await supabase.from("chat_messages").insert([
+        {
+          user_id: user.id,
+          file_id: fileId,
+          role: "assistant",
+          content: reply,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+
+      setChatMessages((prev) => [...prev, { role: "assistant", content: reply }]);
     } catch (err) {
-      setAiAnswer("Error: " + (err.message || "Failed to reach AI."));
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "Error: " + (err.message || "Failed to retrieve response.") },
+      ]);
     } finally {
       setAiLoading(false);
     }
   };
 
-  const displayName = file?.file_name || file?.name || "document";
-  const fileExt = displayName.split(".").pop().toLowerCase();
+  // Clear File Specific Chat History
+  const confirmClearChat = async () => {
+    if (clearingChat || !user?.id) return;
+    setClearingChat(true);
 
-  const isPdf = fileExt === "pdf";
-  const isDocx = ["docx", "doc", "dotx", "ppt", "pptx"].includes(fileExt);
-  const isImage = ["jpg", "jpeg", "png", "webp", "gif", "svg"].includes(fileExt);
+    try {
+      await supabase
+        .from("chat_messages")
+        .delete()
+        .eq("user_id", user.id)
+        .eq("file_id", fileId);
+
+      setChatMessages([]);
+      setShowClearModal(false);
+      setToastMessage("Document chat cleared successfully");
+    } catch (err) {
+      setToastMessage("Failed to clear chat: " + err.message);
+    } finally {
+      setClearingChat(false);
+    }
+  };
+
+  // Generate Document Summary
+  const handleGenerateSummary = async () => {
+    if (summaryLoading || aiLoading || !user?.id) return;
+
+    setSummaryLoading(true);
+    const fullText = file?.extracted_text || docText || `Document: ${displayName}`;
+
+    const systemPrompt = `You are StudiFi Academic Advisor. Provide a structured high-yield summary for "${displayName}":
+- **📌 Executive Overview**
+- **⚡ Core Principles & Logic**
+- **🎯 High-Yield Exam Takeaways**`;
+
+    const userPrompt = `Summarize the entire document:\n"""\n${fullText.slice(0, 10000)}\n"""`;
+
+    try {
+      const summary = await askGrok([{ role: "user", content: userPrompt }], systemPrompt);
+      
+      await supabase.from("chat_messages").insert([
+        {
+          user_id: user.id,
+          file_id: fileId,
+          role: "user",
+          content: "Provide a comprehensive summary of this document.",
+          created_at: new Date().toISOString(),
+        },
+        {
+          user_id: user.id,
+          file_id: fileId,
+          role: "assistant",
+          content: summary,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "user", content: "Provide a comprehensive summary of this document." },
+        { role: "assistant", content: summary },
+      ]);
+    } catch (err) {
+      alert("Summary failed: " + err.message);
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
+  // Pure Conceptual Quiz Generator (No Filenames in Questions)
+  const handleOpenQuiz = async () => {
+    setShowQuizModal(true);
+    setQuizLoading(true);
+    setQuizQuestions([]);
+    setUserAnswers({});
+    setQuizSubmitted(false);
+
+    try {
+      let contentText = docText || file?.extracted_text || "";
+      if (!contentText && blobUrl) {
+        try {
+          const res = await fetch(blobUrl);
+          const currentBlob = await res.blob();
+          contentText = await extractTextFromPdfBlob(currentBlob);
+          if (contentText) setDocText(contentText);
+        } catch (e) {
+          console.warn("Direct blob extract failed:", e);
+        }
+      }
+
+      const cleanContext = (contentText || "")
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      const systemPrompt = `You are a strict university examination creator.
+Your task is to generate exactly 5 multiple choice questions (MCQs) strictly testing the actual subject theory, laws, definitions, mathematics, circuits, logic, or engineering concepts present in the text.
+
+CRITICAL RULES:
+1. NEVER mention or use the file name, document title, author name, or extension in the questions.
+2. Every question must test subject concepts.
+3. Return ONLY a valid JSON array of 5 questions with NO markdown backticks.
+
+Format:
+[
+  {
+    "id": 1,
+    "question": "What is the primary function of ...?",
+    "options": ["Option A", "Option B", "Option C", "Option D"],
+    "correctAnswer": 0,
+    "explanation": "Explanation here."
+  }
+]`;
+
+      const response = await askGrok(
+        [{ role: "user", content: `Material Context:\n"""\n${cleanContext.slice(0, 9000)}\n"""\n\nGenerate 5 MCQs in JSON:` }],
+        systemPrompt
+      );
+
+      let cleaned = response.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+      const parsed = JSON.parse(cleaned);
+
+      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error("Invalid quiz output.");
+      setQuizQuestions(parsed);
+    } catch (err) {
+      console.error("Quiz error:", err);
+      alert("Quiz error: " + (err.message || "Failed to generate quiz"));
+      setShowQuizModal(false);
+    } finally {
+      setQuizLoading(false);
+    }
+  };
+
+  const handleSubmitQuiz = async () => {
+    if (quizSubmitted || savingScore) return;
+    setSavingScore(true);
+
+    let score = 0;
+    quizQuestions.forEach((q) => {
+      if (userAnswers[q.id] === q.correctAnswer) score += 1;
+    });
+
+    const percentage = Math.round((score / quizQuestions.length) * 100);
+
+    try {
+      if (user?.id) {
+        await supabase.from("quiz_attempts").insert([
+          {
+            user_id: user.id,
+            folder_id: file?.folder_id || null,
+            quiz_title: `${displayName} Quiz`,
+            score,
+            total_questions: quizQuestions.length,
+            percentage,
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+    } catch (e) {
+      console.error("Failed to log score:", e);
+    } finally {
+      setQuizSubmitted(true);
+      setSavingScore(false);
+    }
+  };
+
+  const handleDownload = () => {
+    const target = blobUrl || publicUrl;
+    if (!target) return;
+    const a = document.createElement("a");
+    a.href = target;
+    a.download = displayName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
 
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto text-white space-y-6">
-      {/* Header Bar */}
+      {/* Sleek Floating Toast Notification */}
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className="fixed top-6 right-6 z-50 flex items-center gap-2.5 bg-[#0f1e35] border border-brand-secondary/40 text-white px-4 py-3 rounded-xl shadow-2xl backdrop-blur-md"
+          >
+            <CheckCircle2 className="w-4 h-4 text-brand-secondary shrink-0" />
+            <span className="text-xs font-semibold">{toastMessage}</span>
+            <button onClick={() => setToastMessage(null)} className="ml-2 text-white/40 hover:text-white">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Dark Themed Confirmation Dialog Modal */}
+      <AnimatePresence>
+        {showClearModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.92, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.92, y: 10 }}
+              className="bg-[#0f1e35] border border-white/10 w-full max-w-sm rounded-2xl p-5 shadow-2xl text-white space-y-4"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Clear Chat History?</h3>
+                  <p className="text-[11px] text-white/40">This will delete messages for this document.</p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowClearModal(false)}
+                  disabled={clearingChat}
+                  className="px-3.5 py-2 text-xs font-medium text-white/60 hover:text-white bg-white/5 hover:bg-white/10 rounded-xl transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmClearChat}
+                  disabled={clearingChat}
+                  className="px-4 py-2 text-xs font-bold text-white bg-red-500 hover:bg-red-600 rounded-xl transition flex items-center gap-1.5 shadow-lg disabled:opacity-50"
+                >
+                  {clearingChat ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                  Yes, Clear
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Top Header */}
       <div className="flex items-center justify-between">
         <button
           onClick={() => navigate(-1)}
@@ -252,6 +525,13 @@ Generate the complete study summary:`;
         </button>
 
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleOpenQuiz}
+            className="flex items-center gap-1.5 text-xs bg-amber-500 hover:bg-amber-400 text-brand-primary font-bold px-3.5 py-2 rounded-xl transition shadow-lg"
+          >
+            <Brain className="w-3.5 h-3.5" /> Quiz This File
+          </button>
+
           {publicUrl && (
             <a
               href={publicUrl}
@@ -262,10 +542,11 @@ Generate the complete study summary:`;
               <ExternalLink className="w-3.5 h-3.5" /> Fullscreen
             </a>
           )}
+
           {(blobUrl || publicUrl) && (
             <button
               onClick={handleDownload}
-              className="flex items-center gap-1.5 text-xs bg-brand-secondary text-brand-primary font-bold px-3.5 py-2 rounded-xl transition hover:bg-amber-400"
+              className="flex items-center gap-1.5 text-xs bg-white/10 hover:bg-white/20 text-white font-bold px-3.5 py-2 rounded-xl transition"
             >
               <Download className="w-3.5 h-3.5" /> Download
             </button>
@@ -278,7 +559,7 @@ Generate the complete study summary:`;
       </h1>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-        {/* Document Viewer Container */}
+        {/* Document Viewer Frame */}
         <div className="lg:col-span-2 rounded-2xl border border-white/10 bg-[#0f1e35] overflow-hidden min-h-[680px] flex flex-col shadow-2xl">
           <div className="px-5 py-3.5 border-b border-white/10 bg-white/2 flex items-center justify-between text-xs font-semibold text-white/70">
             <span className="flex items-center gap-2">
@@ -318,88 +599,242 @@ Generate the complete study summary:`;
                 title={displayName}
                 className="w-full h-[680px] border-none bg-white rounded-b-xl"
               />
-            ) : isImage && (blobUrl || publicUrl) ? (
-              <div className="p-6 max-h-[650px] flex items-center justify-center">
-                <img
-                  src={blobUrl || publicUrl}
-                  alt={displayName}
-                  className="max-h-[620px] max-w-full object-contain rounded-xl shadow-2xl"
-                />
+            ) : (
+              <div className="p-8 text-center">
+                <FileText className="w-12 h-12 text-brand-secondary mx-auto mb-2 opacity-50" />
+                <p className="text-sm text-white/80">{displayName}</p>
               </div>
-            ) : null}
+            )}
           </div>
         </div>
 
-        {/* AI Assistant & Summary Box */}
-        <div className="bg-[#0f1e35] rounded-2xl border border-white/10 p-5 space-y-4 shadow-xl">
-          <div className="flex items-start justify-between border-b border-white/10 pb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-brand-secondary/10 border border-brand-secondary/20">
-                <Sparkles className="w-5 h-5 text-brand-secondary" />
+        {/* Real-Time RAG Conversational Chatbot */}
+        <div className="bg-[#0f1e35] rounded-2xl border border-white/10 flex flex-col h-[680px] shadow-xl overflow-hidden">
+          {/* Top Bar with Clear Button */}
+          <div className="p-4 border-b border-white/10 flex items-center justify-between bg-[#12233d]">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-brand-secondary/10 border border-brand-secondary/20">
+                <Bot className="w-4 h-4 text-brand-secondary" />
               </div>
               <div>
-                <h2 className="text-sm font-bold text-white">StudiFi AI Assistant</h2>
-                <p className="text-xs text-white/40">Summaries & interactive Q&A</p>
+                <h2 className="text-xs font-bold text-white">Document RAG Chatbot</h2>
+                <p className="text-[10px] text-white/40">Real-time context & follow-ups</p>
               </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {chatMessages.length > 0 && (
+                <button
+                  onClick={() => setShowClearModal(true)}
+                  className="text-[11px] text-white/40 hover:text-red-400 p-1.5 rounded-lg hover:bg-white/5 transition"
+                  title="Clear Chat History"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+              <button
+                onClick={handleGenerateSummary}
+                disabled={summaryLoading || aiLoading}
+                className="text-[11px] bg-white/10 hover:bg-white/20 text-brand-secondary px-2.5 py-1.5 rounded-lg transition font-medium flex items-center gap-1.5"
+              >
+                {summaryLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <BookOpen className="w-3 h-3" />}
+                Summary
+              </button>
             </div>
           </div>
 
-          {/* Generate Summary Button */}
-          <button
-            onClick={handleGenerateSummary}
-            disabled={summaryLoading || aiLoading}
-            className="w-full bg-linear-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-brand-primary font-extrabold py-3 px-4 rounded-xl transition flex items-center justify-center gap-2 text-xs shadow-lg shadow-amber-500/10 disabled:opacity-50"
-          >
-            {summaryLoading ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" /> Generating Full Summary...
-              </>
-            ) : (
-              <>
-                <BookOpen className="w-4 h-4" /> Generate Summary
-              </>
-            )}
-          </button>
-
-          {/* Ask AI Form */}
-          <form onSubmit={handleAskAI} className="space-y-3 pt-1">
-            <textarea
-              rows={3}
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              placeholder={`Ask a question about ${displayName}...`}
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-brand-secondary transition resize-none"
-            />
-            <button
-              type="submit"
-              disabled={aiLoading || summaryLoading || !question.trim()}
-              className="w-full bg-white/10 hover:bg-white/20 text-white font-semibold py-2.5 rounded-xl transition text-xs flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              {aiLoading ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Answering...
-                </>
-              ) : (
-                <>
-                  <Send className="w-3.5 h-3.5" /> Ask Question
-                </>
-              )}
-            </button>
-          </form>
-
-          {/* AI Response Window */}
-          {aiAnswer && (
-            <div className="mt-4 p-4 rounded-xl bg-black/40 border border-brand-secondary/20 text-xs text-white/90 space-y-2 max-h-96 overflow-y-auto">
-              <p className="font-semibold text-brand-secondary flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-brand-secondary" /> AI Response:
-              </p>
-              <div className="whitespace-pre-wrap leading-relaxed pr-1 text-white/80 space-y-2">
-                {aiAnswer}
+          {/* Conversation Stream */}
+          <div className="flex-1 p-4 overflow-y-auto space-y-3 text-xs">
+            {chatMessages.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-center text-white/40 space-y-2 px-4">
+                <Sparkles className="w-8 h-8 text-brand-secondary/40" />
+                <p className="font-semibold text-white/70">Document RAG Active</p>
+                <p className="text-[11px] leading-relaxed">
+                  Ask specific questions about this document. Follow-ups and continuous discussion are saved automatically.
+                </p>
               </div>
+            ) : (
+              chatMessages.map((msg, index) => (
+                <div
+                  key={index}
+                  className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}
+                >
+                  <div
+                    className={`max-w-[90%] p-3 rounded-2xl leading-relaxed whitespace-pre-wrap ${
+                      msg.role === "user"
+                        ? "bg-brand-secondary text-brand-primary font-medium rounded-tr-none"
+                        : "bg-white/5 border border-white/10 text-white/90 rounded-tl-none"
+                    }`}
+                  >
+                    {msg.content}
+                  </div>
+                </div>
+              ))
+            )}
+            {aiLoading && (
+              <div className="flex items-center gap-2 text-white/50 text-xs py-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-secondary" />
+                <span>Reading document context & formulating answer...</span>
+              </div>
+            )}
+            <div ref={chatBottomRef} />
+          </div>
+
+          {/* Input Box */}
+          <form onSubmit={handleSendChat} className="p-3 border-t border-white/10 bg-[#12233d]">
+            <div className="flex items-center gap-2 bg-[#0f1e35] border border-white/10 rounded-xl px-3 py-2 focus-within:border-brand-secondary transition">
+              <input
+                type="text"
+                value={inputQuestion}
+                onChange={(e) => setInputQuestion(e.target.value)}
+                placeholder="Ask about this document or follow up..."
+                disabled={aiLoading}
+                className="flex-1 bg-transparent text-xs text-white placeholder:text-white/30 focus:outline-none"
+              />
+              <button
+                type="submit"
+                disabled={aiLoading || !inputQuestion.trim()}
+                className="p-1.5 bg-brand-secondary hover:bg-amber-400 text-brand-primary rounded-lg transition disabled:opacity-40"
+              >
+                <Send className="w-3.5 h-3.5" />
+              </button>
             </div>
-          )}
+          </form>
         </div>
       </div>
+
+      {/* Per-File Quiz Modal */}
+      {showQuizModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0f1e35] border border-white/10 w-full max-w-2xl max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+            <div className="p-4 border-b border-white/10 flex items-center justify-between bg-[#12233d]">
+              <div className="flex items-center gap-2">
+                <Brain className="w-5 h-5 text-brand-secondary" />
+                <div>
+                  <h3 className="text-sm font-bold text-white">{displayName} — Quiz</h3>
+                  <p className="text-[10px] text-white/40">5 Isolated MCQs generated from this file</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowQuizModal(false)}
+                className="p-1.5 text-white/40 hover:text-white rounded-lg transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 p-6 overflow-y-auto space-y-6">
+              {quizLoading ? (
+                <div className="py-20 flex flex-col items-center justify-center text-white/50 space-y-3">
+                  <Loader2 className="w-8 h-8 animate-spin text-brand-secondary" />
+                  <p className="text-xs">Generating 5 custom MCQs from this document...</p>
+                </div>
+              ) : quizQuestions.length > 0 ? (
+                <>
+                  {quizSubmitted && (
+                    <div className="p-4 rounded-xl bg-brand-secondary/10 border border-brand-secondary/30 flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-semibold text-brand-secondary">Attempt Logged in Analytics</p>
+                        <h4 className="text-base font-bold text-white mt-0.5">
+                          Score: {quizQuestions.filter((q) => userAnswers[q.id] === q.correctAnswer).length} / {quizQuestions.length}
+                        </h4>
+                      </div>
+                      <button
+                        onClick={handleOpenQuiz}
+                        className="bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 font-medium transition"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" /> Retake
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="space-y-4">
+                    {quizQuestions.map((q, idx) => {
+                      const isSelected = userAnswers[q.id] !== undefined;
+                      const isCorrect = userAnswers[q.id] === q.correctAnswer;
+
+                      return (
+                        <div
+                          key={q.id || idx}
+                          className="bg-[#12233d] border border-white/10 p-4 rounded-xl space-y-3"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-xs font-bold text-white leading-relaxed">
+                              <span className="text-brand-secondary mr-1.5">Q{idx + 1}.</span>
+                              {q.question}
+                            </p>
+                            {quizSubmitted && (
+                              <span>
+                                {isCorrect ? (
+                                  <span className="text-[10px] font-bold text-green-400 bg-green-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                                    <CheckCircle2 className="w-3 h-3" /> Correct
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] font-bold text-red-400 bg-red-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                                    <XCircle className="w-3 h-3" /> Incorrect
+                                  </span>
+                                )}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {q.options.map((opt, optIdx) => {
+                              const selectedThis = userAnswers[q.id] === optIdx;
+                              const isRightAnswer = q.correctAnswer === optIdx;
+
+                              let btnClass = "bg-white/5 border-white/10 text-white/80 hover:bg-white/10";
+                              if (quizSubmitted) {
+                                if (isRightAnswer) btnClass = "bg-green-950/70 border-green-500 text-green-300 font-semibold";
+                                else if (selectedThis && !isRightAnswer) btnClass = "bg-red-950/70 border-red-500 text-red-300";
+                                else btnClass = "opacity-40 border-white/5";
+                              } else if (selectedThis) {
+                                btnClass = "bg-brand-secondary/20 border-brand-secondary text-brand-secondary font-semibold";
+                              }
+
+                              return (
+                                <button
+                                  key={optIdx}
+                                  onClick={() => !quizSubmitted && setUserAnswers((prev) => ({ ...prev, [q.id]: optIdx }))}
+                                  disabled={quizSubmitted}
+                                  className={`p-2.5 rounded-lg border text-xs text-left transition ${btnClass}`}
+                                >
+                                  {opt}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {quizSubmitted && q.explanation && (
+                            <div className="p-2.5 rounded-lg bg-black/30 border border-white/5 text-[11px] text-white/70">
+                              <span className="font-bold text-brand-secondary flex items-center gap-1 mb-1">
+                                <HelpCircle className="w-3 h-3" /> Explanation:
+                              </span>
+                              {q.explanation}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : null}
+            </div>
+
+            {!quizSubmitted && quizQuestions.length > 0 && (
+              <div className="p-4 border-t border-white/10 bg-[#12233d] flex justify-end gap-2">
+                <button
+                  onClick={handleSubmitQuiz}
+                  disabled={Object.keys(userAnswers).length === 0 || savingScore}
+                  className="bg-brand-secondary hover:bg-amber-400 text-brand-primary font-bold px-6 py-2.5 rounded-xl transition text-xs flex items-center gap-2 shadow-lg disabled:opacity-50"
+                >
+                  {savingScore && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  Submit Quiz ({Object.keys(userAnswers).length}/{quizQuestions.length})
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

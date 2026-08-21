@@ -170,38 +170,46 @@ export default function FolderDetails() {
           {files.map((fileItem) => {
             const fileNameDisplay = fileItem.file_name || fileItem.name || "document.pdf";
             return (
-              <div
-                key={fileItem.id}
-                onClick={() => navigate(`/myfolders/file/${fileItem.id}`)}
-                className="bg-[#0f1e35] hover:bg-[#152744] border border-white/10 hover:border-brand-secondary/40 p-4 rounded-xl transition cursor-pointer flex items-center justify-between group shadow-md"
-              >
-                <div className="flex items-center gap-3.5 min-w-0">
-                  <div className="p-2.5 rounded-lg bg-white/5 group-hover:bg-brand-secondary/20 transition">
-                    <FileText className="w-5 h-5 text-brand-secondary shrink-0" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-white/90 truncate">
-                      {fileNameDisplay}
-                    </p>
-                    <p className="text-[11px] text-white/40">
-                      {fileItem.file_size
-                        ? `${Math.round(fileItem.file_size / 1024)} KB`
-                        : "PDF Document"}
-                    </p>
-                  </div>
-                </div>
+            // FolderDetails.jsx ke action buttons me navigate directly to file viewer:
+<div
+  key={fileItem.id}
+  onClick={() => navigate(`/myfolders/file/${fileItem.id}`)}
+  className="bg-[#0f1e35] hover:bg-[#152744] border border-white/10 hover:border-brand-secondary/40 p-4 rounded-xl transition cursor-pointer flex items-center justify-between group shadow-md"
+>
+  <div className="flex items-center gap-3.5 min-w-0">
+    <div className="p-2.5 rounded-lg bg-white/5 group-hover:bg-brand-secondary/20 transition">
+      <FileText className="w-5 h-5 text-brand-secondary shrink-0" />
+    </div>
+    <div className="min-w-0">
+      <p className="text-sm font-semibold text-white/90 truncate">
+        {fileItem.file_name || fileItem.name}
+      </p>
+      <p className="text-[11px] text-white/40">
+        {fileItem.file_size ? `${Math.round(fileItem.file_size / 1024)} KB` : "Document"}
+      </p>
+    </div>
+  </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={(e) => handleDeleteFile(e, fileItem)}
-                    className="p-2 text-white/30 hover:text-red-400 hover:bg-white/5 rounded-lg transition"
-                    title="Delete file"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                  <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-brand-secondary transition" />
-                </div>
-              </div>
+  <div className="flex items-center gap-2">
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        navigate(`/myfolders/file/${fileItem.id}`);
+      }}
+      className="p-1.5 px-2.5 bg-brand-secondary/10 hover:bg-brand-secondary/20 text-brand-secondary rounded-lg text-xs font-semibold flex items-center gap-1 transition"
+      title="Quiz & AI Chat"
+    >
+      <Brain className="w-3.5 h-3.5" /> Quiz
+    </button>
+    <button
+      onClick={(e) => handleDeleteFile(e, fileItem)}
+      className="p-2 text-white/30 hover:text-red-400 hover:bg-white/5 rounded-lg transition"
+      title="Delete file"
+    >
+      <Trash2 className="w-4 h-4" />
+    </button>
+  </div>
+</div>
             );
           })}
         </div>
