@@ -1,6 +1,6 @@
 import { Navigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import LandingLayout from "@/layouts/LandingLayout";
+import LandingPage from "@/pages/Landing/LandingPage";
 
 export default function HomeRedirect() {
   const { loading, isAuthenticated } = useAuth();
@@ -19,5 +19,5 @@ export default function HomeRedirect() {
     return <Navigate to="/dashboard" replace />;
   }
 
-  return <LandingLayout />;
+  return <LandingPage />;
 }
