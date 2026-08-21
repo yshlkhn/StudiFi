@@ -25,33 +25,85 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
-// Client-side PDF Text Extractor
+// 1. Client-Side Universal Script Loader
+async function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) return resolve();
+    const script = document.createElement("script");
+    script.src = src;
+    script.onload = () => resolve();
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
+}
+
+// 2. Client-Side PDF Text Extractor
 async function extractTextFromPdfBlob(blob) {
   if (!window.pdfjsLib) {
-    await new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
-      script.onload = () => {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-          "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-        resolve();
-      };
-      script.onerror = reject;
-      document.head.appendChild(script);
-    });
+    await loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js");
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   }
 
   const arrayBuffer = await blob.arrayBuffer();
   const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   let extracted = "";
 
-  const maxPages = Math.min(pdf.numPages, 30);
+  const maxPages = Math.min(pdf.numPages, 35);
   for (let i = 1; i <= maxPages; i++) {
     const page = await pdf.getPage(i);
     const textContent = await page.getTextContent();
     const str = textContent.items.map((item) => item.str).join(" ");
     if (str.trim()) {
       extracted += `\n[Page ${i}]\n${str}\n`;
+    }
+  }
+
+  return extracted.trim();
+}
+
+// 3. Client-Side PPTX & DOCX Slide/Doc Text Extractor (using JSZip)
+async function extractTextFromOfficeBlob(blob, extension) {
+  if (!window.JSZip) {
+    await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js");
+  }
+
+  const zip = await window.JSZip.loadAsync(blob);
+  let extracted = "";
+
+  if (extension.startsWith("ppt")) {
+    // Extract text from all PowerPoint slides (ppt/slides/slide*.xml)
+    const slideFiles = Object.keys(zip.files)
+      .filter((filename) => /^ppt\/slides\/slide\d+\.xml$/i.test(filename))
+      .sort((a, b) => {
+        const numA = parseInt(a.match(/\d+/)[0], 10);
+        const numB = parseInt(b.match(/\d+/)[0], 10);
+        return numA - numB;
+      });
+
+    for (let i = 0; i < slideFiles.length; i++) {
+      const xmlStr = await zip.file(slideFiles[i]).async("text");
+      // Extract text content within <a:t>...</a:t> tags
+      const matches = xmlStr.match(/<a:t[^>]*>([\s\S]*?)<\/a:t>/gi) || [];
+      const slideText = matches
+        .map((m) => m.replace(/<[^>]+>/g, "").trim())
+        .filter(Boolean)
+        .join(" ");
+
+      if (slideText) {
+        extracted += `\n[Slide ${i + 1}]\n${slideText}\n`;
+      }
+    }
+  } else if (extension.startsWith("doc")) {
+    // Extract text from Word Document (word/document.xml)
+    const docFile = zip.file("word/document.xml");
+    if (docFile) {
+      const xmlStr = await docFile.async("text");
+      const matches = xmlStr.match(/<w:t[^>]*>([\s\S]*?)<\/w:t>/gi) || [];
+      extracted = matches
+        .map((m) => m.replace(/<[^>]+>/g, "").trim())
+        .filter(Boolean)
+        .join(" ");
     }
   }
 
@@ -95,7 +147,7 @@ export default function FileViewer() {
     }
   }, [toastMessage]);
 
-  // Load Document & Saved File Chat History
+  // Load Document & Extract Content (PDF, PPTX, DOCX)
   useEffect(() => {
     let activeUrl = null;
 
@@ -104,7 +156,7 @@ export default function FileViewer() {
         setLoading(true);
         setError("");
 
-        // 1. Fetch File Record
+        // 1. Fetch DB Record
         const { data: fileData, error: dbErr } = await supabase
           .from("files")
           .select("*")
@@ -117,7 +169,7 @@ export default function FileViewer() {
 
         setFile(fileData);
 
-        // 2. Fetch Persistent Chat for THIS specific file
+        // 2. Fetch Chat History
         if (user?.id) {
           const { data: savedChats } = await supabase
             .from("chat_messages")
@@ -162,26 +214,36 @@ export default function FileViewer() {
         setPublicUrl(directUrl);
 
         if (foundBlob) {
-          const isPdfFile = (fileData.file_name || "").toLowerCase().endsWith(".pdf");
-          const mimeType = isPdfFile ? "application/pdf" : foundBlob.type || "application/octet-stream";
+          const name = (fileData.file_name || fileData.name || "").toLowerCase();
+          const ext = name.split(".").pop();
+          const isPdfFile = ext === "pdf";
+
+          const mimeType = isPdfFile
+            ? "application/pdf"
+            : foundBlob.type || "application/octet-stream";
 
           activeUrl = URL.createObjectURL(new Blob([foundBlob], { type: mimeType }));
           setBlobUrl(activeUrl);
 
-          if (isPdfFile) {
-            try {
-              const text = await extractTextFromPdfBlob(foundBlob);
-              if (text && text.length > 50) {
-                setDocText(text);
-                supabase
-                  .from("files")
-                  .update({ extracted_text: text.slice(0, 30000) })
-                  .eq("id", fileData.id)
-                  .then();
-              }
-            } catch (err) {
-              console.warn("PDF.js text parse:", err);
+          // Real Text Extraction for PDF, PPTX & DOCX
+          try {
+            let extracted = "";
+            if (isPdfFile) {
+              extracted = await extractTextFromPdfBlob(foundBlob);
+            } else if (["pptx", "ppt", "docx", "doc"].includes(ext)) {
+              extracted = await extractTextFromOfficeBlob(foundBlob, ext);
             }
+
+            if (extracted && extracted.length > 30) {
+              setDocText(extracted);
+              supabase
+                .from("files")
+                .update({ extracted_text: extracted.slice(0, 35000) })
+                .eq("id", fileData.id)
+                .then();
+            }
+          } catch (extractErr) {
+            console.warn("Text extraction notice:", extractErr);
           }
         } else if (directUrl) {
           setBlobUrl(directUrl);
@@ -210,9 +272,9 @@ export default function FileViewer() {
   const displayName = file?.file_name || file?.name || "document";
   const fileExt = displayName.split(".").pop().toLowerCase();
   const isPdf = fileExt === "pdf";
-  const isDocx = ["docx", "doc", "dotx", "ppt", "pptx"].includes(fileExt);
+  const isOffice = ["docx", "doc", "ppt", "pptx"].includes(fileExt);
 
-  // Send RAG Chat Message & Save to Supabase
+  // Send RAG Chat Message
   const handleSendChat = async (e) => {
     e.preventDefault();
     if (!inputQuestion.trim() || aiLoading || !user?.id) return;
@@ -225,7 +287,6 @@ export default function FileViewer() {
     setAiLoading(true);
 
     try {
-      // 1. Insert user message in Supabase with file_id
       await supabase.from("chat_messages").insert([
         {
           user_id: user.id,
@@ -240,20 +301,19 @@ export default function FileViewer() {
       const relevantSnippets = retrieveRelevantChunks(fullContext, userQuery);
 
       const systemPrompt = `You are StudiFi's Intelligent Document Assistant.
-You have real-time access to the user's uploaded document "${displayName}".
+You have real-time access to the user's uploaded presentation/document "${displayName}".
 
-=== RETRIEVED RELEVANT DOCUMENT CONTEXT ===
+=== RETRIEVED RELEVANT SLIDES / DOCUMENT CONTEXT ===
 ${relevantSnippets}
-==========================================
+===================================================
 
 Instructions:
-1. Answer strictly using the document context above.
-2. Maintain full conversational memory and respond to follow-up questions accurately.
+1. Answer strictly using the actual content and points from the slides/document above.
+2. Maintain conversational memory and respond to follow-up questions accurately.
 3. Be direct, clear, and structured with bold highlights and bullet points.`;
 
       const reply = await askGrok(newHistory, systemPrompt);
 
-      // 2. Insert assistant response in Supabase
       await supabase.from("chat_messages").insert([
         {
           user_id: user.id,
@@ -275,7 +335,7 @@ Instructions:
     }
   };
 
-  // Clear File Specific Chat History
+  // Clear Chat History
   const confirmClearChat = async () => {
     if (clearingChat || !user?.id) return;
     setClearingChat(true);
@@ -297,23 +357,54 @@ Instructions:
     }
   };
 
-  // Generate Document Summary
+  // Generate Document / PPT Summary
   const handleGenerateSummary = async () => {
     if (summaryLoading || aiLoading || !user?.id) return;
 
     setSummaryLoading(true);
-    const fullText = file?.extracted_text || docText || `Document: ${displayName}`;
 
-    const systemPrompt = `You are StudiFi Academic Advisor. Provide a structured high-yield summary for "${displayName}":
-- **📌 Executive Overview**
-- **⚡ Core Principles & Logic**
-- **🎯 High-Yield Exam Takeaways**`;
+    let fullText = docText || file?.extracted_text || "";
 
-    const userPrompt = `Summarize the entire document:\n"""\n${fullText.slice(0, 10000)}\n"""`;
+    // Force extraction if not in memory
+    if (!fullText) {
+      const bucket = file?.bucket || "documents";
+      const storagePath = file?.file_path || file?.storage_path;
+      try {
+        const { data: bData } = await supabase.storage.from(bucket).download(storagePath);
+        if (bData) {
+          if (fileExt.startsWith("ppt") || fileExt.startsWith("doc")) {
+            fullText = await extractTextFromOfficeBlob(bData, fileExt);
+          } else if (fileExt === "pdf") {
+            fullText = await extractTextFromPdfBlob(bData);
+          }
+          if (fullText) setDocText(fullText);
+        }
+      } catch (e) {
+        console.warn("Summary extraction check:", e);
+      }
+    }
+
+    const cleanContext = (fullText || "")
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "")
+      .trim();
+
+    const systemPrompt = `You are StudiFi's Lead Academic Professor. Provide a comprehensive, high-yield summary strictly based on the extracted content from the slides/document.
+
+Structure your response with clear Markdown:
+- **📌 Executive Overview**: 2-3 sentences summarizing the purpose and key message.
+- **⚡ Key Slide Points & Findings**: Core topics, bullet points, statistics, and findings extracted from the slides.
+- **🎯 Major Takeaways & Future Scope**: Crucial insights and conclusions.
+
+NEVER say you don't have the content if text is provided below.`;
+
+    const userPrompt = `Read the following slides/document content and generate the full structured summary:
+"""
+${cleanContext.slice(0, 15000)}
+"""`;
 
     try {
       const summary = await askGrok([{ role: "user", content: userPrompt }], systemPrompt);
-      
+
       await supabase.from("chat_messages").insert([
         {
           user_id: user.id,
@@ -343,7 +434,7 @@ Instructions:
     }
   };
 
-  // Pure Conceptual Quiz Generator (No Filenames in Questions)
+  // Pure Conceptual Quiz Generator
   const handleOpenQuiz = async () => {
     setShowQuizModal(true);
     setQuizLoading(true);
@@ -353,14 +444,18 @@ Instructions:
 
     try {
       let contentText = docText || file?.extracted_text || "";
-      if (!contentText && blobUrl) {
-        try {
-          const res = await fetch(blobUrl);
-          const currentBlob = await res.blob();
-          contentText = await extractTextFromPdfBlob(currentBlob);
+
+      if (!contentText) {
+        const bucket = file?.bucket || "documents";
+        const storagePath = file?.file_path || file?.storage_path;
+        const { data: bData } = await supabase.storage.from(bucket).download(storagePath);
+        if (bData) {
+          if (fileExt.startsWith("ppt") || fileExt.startsWith("doc")) {
+            contentText = await extractTextFromOfficeBlob(bData, fileExt);
+          } else if (fileExt === "pdf") {
+            contentText = await extractTextFromPdfBlob(bData);
+          }
           if (contentText) setDocText(contentText);
-        } catch (e) {
-          console.warn("Direct blob extract failed:", e);
         }
       }
 
@@ -369,34 +464,34 @@ Instructions:
         .replace(/\s+/g, " ")
         .trim();
 
-      const systemPrompt = `You are a strict university examination creator.
-Your task is to generate exactly 5 multiple choice questions (MCQs) strictly testing the actual subject theory, laws, definitions, mathematics, circuits, logic, or engineering concepts present in the text.
+      const systemPrompt = `You are a university examination creator.
+Your task is to generate exactly 5 multiple choice questions (MCQs) strictly testing the actual subject theory, laws, definitions, medical, or engineering concepts present in the text.
 
 CRITICAL RULES:
 1. NEVER mention or use the file name, document title, author name, or extension in the questions.
-2. Every question must test subject concepts.
+2. Every question must test academic/subject concepts.
 3. Return ONLY a valid JSON array of 5 questions with NO markdown backticks.
 
 Format:
 [
   {
     "id": 1,
-    "question": "What is the primary function of ...?",
+    "question": "What is the key mechanism discussed?",
     "options": ["Option A", "Option B", "Option C", "Option D"],
     "correctAnswer": 0,
-    "explanation": "Explanation here."
+    "explanation": "Detailed explanation."
   }
 ]`;
 
       const response = await askGrok(
-        [{ role: "user", content: `Material Context:\n"""\n${cleanContext.slice(0, 9000)}\n"""\n\nGenerate 5 MCQs in JSON:` }],
+        [{ role: "user", content: `Context Material:\n"""\n${cleanContext.slice(0, 10000)}\n"""\n\nGenerate 5 MCQs in JSON:` }],
         systemPrompt
       );
 
       let cleaned = response.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
       const parsed = JSON.parse(cleaned);
 
-      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error("Invalid quiz output.");
+      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error("Invalid quiz format.");
       setQuizQuestions(parsed);
     } catch (err) {
       console.error("Quiz error:", err);
@@ -453,7 +548,7 @@ Format:
 
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto text-white space-y-6">
-      {/* Sleek Floating Toast Notification */}
+      {/* Toast Notification */}
       <AnimatePresence>
         {toastMessage && (
           <motion.div
@@ -471,7 +566,7 @@ Format:
         )}
       </AnimatePresence>
 
-      {/* Dark Themed Confirmation Dialog Modal */}
+      {/* Confirmation Modal */}
       <AnimatePresence>
         {showClearModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs">
@@ -574,7 +669,7 @@ Format:
             {loading ? (
               <div className="flex flex-col items-center gap-3 text-white/50 py-24">
                 <Loader2 className="w-8 h-8 animate-spin text-brand-secondary" />
-                <span className="text-sm">Loading document preview...</span>
+                <span className="text-sm">Loading presentation preview...</span>
               </div>
             ) : error ? (
               <div className="flex flex-col items-center gap-3 text-red-400 p-8 text-center max-w-md">
@@ -593,9 +688,9 @@ Format:
                 title={displayName}
                 className="w-full h-[680px] border-none bg-white rounded-b-xl"
               />
-            ) : isDocx && publicUrl ? (
+            ) : isOffice && (publicUrl || blobUrl) ? (
               <iframe
-                src={`https://docs.google.com/gview?url=${encodeURIComponent(publicUrl)}&embedded=true`}
+                src={`https://docs.google.com/gview?url=${encodeURIComponent(publicUrl || blobUrl)}&embedded=true`}
                 title={displayName}
                 className="w-full h-[680px] border-none bg-white rounded-b-xl"
               />
@@ -649,7 +744,7 @@ Format:
                 <Sparkles className="w-8 h-8 text-brand-secondary/40" />
                 <p className="font-semibold text-white/70">Document RAG Active</p>
                 <p className="text-[11px] leading-relaxed">
-                  Ask specific questions about this document. Follow-ups and continuous discussion are saved automatically.
+                  Ask specific questions about these slides. Follow-ups and continuous discussions are saved automatically.
                 </p>
               </div>
             ) : (
@@ -673,7 +768,7 @@ Format:
             {aiLoading && (
               <div className="flex items-center gap-2 text-white/50 text-xs py-2">
                 <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-secondary" />
-                <span>Reading document context & formulating answer...</span>
+                <span>Reading slide contents & formulating answer...</span>
               </div>
             )}
             <div ref={chatBottomRef} />
@@ -686,7 +781,7 @@ Format:
                 type="text"
                 value={inputQuestion}
                 onChange={(e) => setInputQuestion(e.target.value)}
-                placeholder="Ask about this document or follow up..."
+                placeholder="Ask about these slides or follow up..."
                 disabled={aiLoading}
                 className="flex-1 bg-transparent text-xs text-white placeholder:text-white/30 focus:outline-none"
               />
@@ -711,7 +806,7 @@ Format:
                 <Brain className="w-5 h-5 text-brand-secondary" />
                 <div>
                   <h3 className="text-sm font-bold text-white">{displayName} — Quiz</h3>
-                  <p className="text-[10px] text-white/40">5 Isolated MCQs generated from this file</p>
+                  <p className="text-[10px] text-white/40">5 MCQs generated from this presentation</p>
                 </div>
               </div>
               <button
@@ -726,7 +821,7 @@ Format:
               {quizLoading ? (
                 <div className="py-20 flex flex-col items-center justify-center text-white/50 space-y-3">
                   <Loader2 className="w-8 h-8 animate-spin text-brand-secondary" />
-                  <p className="text-xs">Generating 5 custom MCQs from this document...</p>
+                  <p className="text-xs">Generating 5 custom MCQs from presentation content...</p>
                 </div>
               ) : quizQuestions.length > 0 ? (
                 <>
